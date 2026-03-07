@@ -9,8 +9,9 @@ import mug
 import postgleam/auth/md5
 import postgleam/auth/scram
 import postgleam/codec/registry.{type Registry}
-import postgleam/config.{type Config}
+import postgleam/config.{type Config, SslDisabled, SslUnverified, SslVerified}
 import postgleam/error.{type Error}
+import postgleam/internal/transport.{type Transport}
 import postgleam/message.{
   type BackendMessage, type RowField, type TransactionStatus,
   AuthCleartext, AuthMd5, AuthOk, AuthSasl, AuthSaslContinue, AuthSaslFinal,
@@ -24,7 +25,7 @@ import postgleam/value.{type Value}
 /// Connection state
 pub type ConnectionState {
   ConnectionState(
-    socket: mug.Socket,
+    transport: Transport,
     connection_id: Option(Int),
     connection_key: Option(Int),
     parameters: Dict(String, String),
@@ -36,7 +37,7 @@ pub type ConnectionState {
 /// Establish a connection to PostgreSQL, complete authentication, and return ready state
 pub fn connect(config: Config) -> Result(ConnectionState, Error) {
   // TCP connect
-  use socket <- result.try(
+  use tcp_socket <- result.try(
     mug.new(config.host, port: config.port)
     |> mug.timeout(milliseconds: config.connect_timeout)
     |> mug.connect()
@@ -45,9 +46,18 @@ pub fn connect(config: Config) -> Result(ConnectionState, Error) {
     }),
   )
 
+  // SSL negotiation if requested (matching Postgrex's do_handshake flow)
+  use conn_transport <- result.try(case config.ssl {
+    SslDisabled -> Ok(transport.Tcp(tcp_socket))
+    SslVerified ->
+      transport.upgrade_to_ssl(tcp_socket, config.host, config.connect_timeout, True)
+    SslUnverified ->
+      transport.upgrade_to_ssl(tcp_socket, config.host, config.connect_timeout, False)
+  })
+
   let state =
     ConnectionState(
-      socket: socket,
+      transport: conn_transport,
       connection_id: None,
       connection_key: None,
       parameters: dict.new(),
@@ -68,28 +78,26 @@ pub fn connect(config: Config) -> Result(ConnectionState, Error) {
   authenticate_loop(state, config)
 }
 
-/// Send a frontend message over the socket
+/// Send a frontend message over the transport
 pub fn send_message(
   state: ConnectionState,
   msg: message.FrontendMessage,
 ) -> Result(ConnectionState, Error) {
   let bytes = message.encode_frontend(msg)
-  case mug.send(state.socket, bytes) {
+  case transport.send(state.transport, bytes) {
     Ok(_) -> Ok(state)
-    Error(e) ->
-      Error(error.SocketError("Send failed: " <> mug_error_to_string(e)))
+    Error(e) -> Error(e)
   }
 }
 
-/// Send raw bytes over the socket
+/// Send raw bytes over the transport
 pub fn send_bytes(
   state: ConnectionState,
   bytes: BitArray,
 ) -> Result(ConnectionState, Error) {
-  case mug.send(state.socket, bytes) {
+  case transport.send(state.transport, bytes) {
     Ok(_) -> Ok(state)
-    Error(e) ->
-      Error(error.SocketError("Send failed: " <> mug_error_to_string(e)))
+    Error(e) -> Error(e)
   }
 }
 
@@ -113,7 +121,7 @@ fn receive_message_loop(
       Error(error.ProtocolError("Decode failed: " <> reason))
     Incomplete -> {
       // Need more data
-      case mug.receive(state.socket, timeout_milliseconds: timeout) {
+      case transport.receive(state.transport, timeout) {
         Ok(data) -> {
           let new_buffer = <<state.buffer:bits, data:bits>>
           receive_message_loop(
@@ -121,10 +129,7 @@ fn receive_message_loop(
             timeout,
           )
         }
-        Error(e) ->
-          Error(error.SocketError(
-            "Receive failed: " <> mug_error_to_string(e),
-          ))
+        Error(e) -> Error(e)
       }
     }
   }
@@ -996,8 +1001,7 @@ fn startup_loop(
 /// Close the connection
 pub fn disconnect(state: ConnectionState) -> Nil {
   let _ = send_message(state, message.Terminate)
-  let _ = mug.shutdown(state.socket)
-  Nil
+  transport.close(state.transport)
 }
 
 // --- Helpers ---
@@ -1029,14 +1033,6 @@ fn connect_error_to_string(err: mug.ConnectError) -> String {
     mug.ConnectFailedIpv4(_) -> "connection failed (IPv4)"
     mug.ConnectFailedIpv6(_) -> "connection failed (IPv6)"
     mug.ConnectFailedBoth(_, _) -> "connection failed (IPv4 and IPv6)"
-  }
-}
-
-fn mug_error_to_string(err: mug.Error) -> String {
-  case err {
-    mug.Closed -> "connection closed"
-    mug.Timeout -> "timeout"
-    _ -> "socket error"
   }
 }
 

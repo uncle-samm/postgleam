@@ -1,7 +1,9 @@
 -module(postgleam_ffi).
 -export([crypto_exor/2, crypto_strong_rand_bytes/1, crypto_mac_hmac/2, md5_hash/1, sha256_hash/1,
          encode_float32/1, decode_float32/1, encode_numeric/1,
-         int_shr/2, int_shl/2, int_band/2, int_bor/2, int_to_hex/1, hex_to_int/1]).
+         int_shr/2, int_shl/2, int_band/2, int_bor/2, int_to_hex/1, hex_to_int/1,
+         ssl_upgrade/4, ssl_send/2, ssl_recv/2, ssl_close/1,
+         get_mug_socket/1]).
 
 crypto_exor(A, B) ->
     crypto:exor(A, B).
@@ -103,3 +105,55 @@ hex_to_int(S) ->
     catch
         _:_ -> {error, nil}
     end.
+
+%% SSL/TLS support — mirrors Postgrex's {mod, sock} pattern
+
+%% Extract the raw gen_tcp socket from a mug Socket opaque type.
+%% mug stores it as an Erlang port wrapped in an opaque type.
+get_mug_socket(MugSocket) ->
+    %% mug.Socket is just a wrapper around gen_tcp socket
+    %% The gleam representation is {socket, Port}
+    element(2, MugSocket).
+
+%% Upgrade a TCP socket to SSL, matching Postgrex's ssl_connect pattern.
+%% Verify=true: verify_peer with system CA certs + SNI
+%% Verify=false: verify_none (for self-signed / Neon)
+ssl_upgrade(MugSocket, Host, Timeout, Verify) ->
+    TcpSock = get_mug_socket(MugSocket),
+    HostCharlist = binary_to_list(Host),
+    SslOpts = case Verify of
+        true ->
+            [{verify, verify_peer},
+             {cacerts, public_key:cacerts_get()},
+             {server_name_indication, HostCharlist},
+             {customize_hostname_check,
+              [{match_fun, public_key:pkix_verify_hostname_match_fun(https)}]}];
+        false ->
+            [{verify, verify_none},
+             {server_name_indication, HostCharlist}]
+    end,
+    case ssl:connect(TcpSock, SslOpts, Timeout) of
+        {ok, SslSock} ->
+            {ok, SslSock};
+        {error, Reason} ->
+            {error, list_to_binary(io_lib:format("~p", [Reason]))}
+    end.
+
+ssl_send(SslSock, Data) ->
+    case ssl:send(SslSock, Data) of
+        ok -> {ok, nil};
+        {error, Reason} ->
+            {error, list_to_binary(io_lib:format("~p", [Reason]))}
+    end.
+
+ssl_recv(SslSock, Timeout) ->
+    case ssl:recv(SslSock, 0, Timeout) of
+        {ok, Data} ->
+            {ok, Data};
+        {error, Reason} ->
+            {error, list_to_binary(io_lib:format("~p", [Reason]))}
+    end.
+
+ssl_close(SslSock) ->
+    ssl:close(SslSock),
+    nil.

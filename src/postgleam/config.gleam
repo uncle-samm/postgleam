@@ -9,7 +9,18 @@ pub type Config {
     timeout: Int,
     connect_timeout: Int,
     extra_parameters: List(#(String, String)),
+    ssl: SslMode,
   )
+}
+
+/// SSL connection mode
+pub type SslMode {
+  /// No SSL (plain TCP)
+  SslDisabled
+  /// SSL required, verify server certificate (uses system CA store + SNI)
+  SslVerified
+  /// SSL required, skip certificate verification (for Neon, self-signed certs)
+  SslUnverified
 }
 
 /// Create a default config for localhost
@@ -23,6 +34,7 @@ pub fn default() -> Config {
     timeout: 15_000,
     connect_timeout: 5000,
     extra_parameters: [],
+    ssl: SslDisabled,
   )
 }
 
@@ -48,4 +60,8 @@ pub fn password(config: Config, password: String) -> Config {
 
 pub fn timeout(config: Config, timeout: Int) -> Config {
   Config(..config, timeout: timeout)
+}
+
+pub fn ssl(config: Config, mode: SslMode) -> Config {
+  Config(..config, ssl: mode)
 }

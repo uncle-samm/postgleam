@@ -98,6 +98,7 @@ pub fn connect_scram_auth_test() {
       timeout: 15_000,
       connect_timeout: 5000,
       extra_parameters: [],
+      ssl: config.SslDisabled,
     )
   let assert Ok(state) = connection.connect(cfg)
   should.be_true(is_some(state.connection_id))
@@ -120,6 +121,15 @@ pub fn connect_multiple_queries_sequential_test() {
   let assert [result] = results
   should.equal(result.rows, [[Some("3")]])
   connection.disconnect(state)
+}
+
+/// When server doesn't support SSL, requesting it should give a clear error
+pub fn connect_ssl_not_available_test() {
+  let cfg =
+    config.default()
+    |> config.database("postgleam_test")
+    |> config.ssl(config.SslUnverified)
+  let assert Error(_) = connection.connect(cfg)
 }
 
 fn is_some(opt: option.Option(a)) -> Bool {
