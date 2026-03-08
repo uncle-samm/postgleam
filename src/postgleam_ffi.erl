@@ -150,3 +150,4 @@ ssl_recv(SslSock, Timeout) ->
 ssl_close(SslSock) ->
     ssl:close(SslSock),
     nil.
+

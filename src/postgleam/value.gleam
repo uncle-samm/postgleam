@@ -3,7 +3,6 @@
 
 import gleam/bit_array
 import gleam/option.{type Option}
-import gleam/string
 
 /// A PostgreSQL value
 pub type Value {
@@ -94,30 +93,41 @@ pub fn uuid_from_string(s: String) -> Result(Value, Nil) {
 pub fn uuid_to_string(val: Value) -> Result(String, Nil) {
   case val {
     Uuid(<<a, b, c, d, e, f, g, h, i, j, k, l, m, n, o, p>>) -> {
-      Ok(
-        byte_to_hex(a)
-        <> byte_to_hex(b)
-        <> byte_to_hex(c)
-        <> byte_to_hex(d)
-        <> "-"
-        <> byte_to_hex(e)
-        <> byte_to_hex(f)
-        <> "-"
-        <> byte_to_hex(g)
-        <> byte_to_hex(h)
-        <> "-"
-        <> byte_to_hex(i)
-        <> byte_to_hex(j)
-        <> "-"
-        <> byte_to_hex(k)
-        <> byte_to_hex(l)
-        <> byte_to_hex(m)
-        <> byte_to_hex(n)
-        <> byte_to_hex(o)
-        <> byte_to_hex(p),
-      )
+      let result = <<
+        hex_hi(a), hex_lo(a), hex_hi(b), hex_lo(b),
+        hex_hi(c), hex_lo(c), hex_hi(d), hex_lo(d),
+        0x2D,
+        hex_hi(e), hex_lo(e), hex_hi(f), hex_lo(f),
+        0x2D,
+        hex_hi(g), hex_lo(g), hex_hi(h), hex_lo(h),
+        0x2D,
+        hex_hi(i), hex_lo(i), hex_hi(j), hex_lo(j),
+        0x2D,
+        hex_hi(k), hex_lo(k), hex_hi(l), hex_lo(l),
+        hex_hi(m), hex_lo(m), hex_hi(n), hex_lo(n),
+        hex_hi(o), hex_lo(o), hex_hi(p), hex_lo(p),
+      >>
+      case bit_array.to_string(result) {
+        Ok(s) -> Ok(s)
+        Error(_) -> Error(Nil)
+      }
     }
     _ -> Error(Nil)
+  }
+}
+
+fn hex_hi(b: Int) -> Int {
+  hex_nibble(b / 16)
+}
+
+fn hex_lo(b: Int) -> Int {
+  hex_nibble(b % 16)
+}
+
+fn hex_nibble(n: Int) -> Int {
+  case n < 10 {
+    True -> n + 0x30
+    False -> n + 0x57
   }
 }
 
@@ -149,10 +159,3 @@ fn hex_byte(b: Int) -> Result(Int, Nil) {
   }
 }
 
-const hex_chars = "0123456789abcdef"
-
-fn byte_to_hex(b: Int) -> String {
-  let hi = string.slice(hex_chars, b / 16, 1)
-  let lo = string.slice(hex_chars, b % 16, 1)
-  hi <> lo
-}

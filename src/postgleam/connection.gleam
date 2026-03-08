@@ -194,6 +194,8 @@ fn simple_query_loop(
     }
     ErrorResponse(fields) -> {
       let pg_fields = error.parse_error_fields(fields)
+      // Drain to ReadyForQuery so the connection is clean for the next query
+      let _ = drain_to_ready(state, timeout)
       Error(error.PgError(fields: pg_fields, connection_id: state.connection_id, query: Some(sql)))
     }
     NoticeResponse(_) -> {
@@ -309,9 +311,11 @@ pub fn execute_prepared(
   use state <- result.try(
     recv_bind_complete(state, prepared.statement, timeout),
   )
+  // Resolve decoders once for all rows
+  let decoders = resolve_row_decoders(prepared.result_fields, registry)
   // Receive DataRows + CommandComplete
   use #(tag, rows, state) <- result.try(
-    recv_execute_rows(state, prepared, registry, timeout, []),
+    recv_execute_rows(state, prepared, decoders, timeout, []),
   )
   // Receive ReadyForQuery
   use state <- result.try(
@@ -406,8 +410,9 @@ pub fn extended_query(
   use state <- result.try(
     recv_bind_complete(state, sql, timeout),
   )
+  let decoders = resolve_row_decoders(prepared.result_fields, registry)
   use #(tag, rows, state) <- result.try(
-    recv_execute_rows(state, prepared, registry, timeout, []),
+    recv_execute_rows(state, prepared, decoders, timeout, []),
   )
   use state <- result.try(recv_close_complete(state, timeout))
   use state <- result.try(recv_ready_for_query(state, sql, timeout))
@@ -461,7 +466,8 @@ pub fn bind_and_execute_portal(
   use state <- result.try(
     recv_bind_complete(state, prepared.statement, timeout),
   )
-  recv_stream_rows(state, prepared, registry, timeout, [])
+  let decoders = resolve_row_decoders(prepared.result_fields, registry)
+  recv_stream_rows(state, prepared, decoders, timeout, [])
 }
 
 /// Execute the next chunk from a portal: Execute(max_rows) + Flush
@@ -478,7 +484,8 @@ pub fn execute_portal(
     message.Execute("", max_rows),
   ))
   use state <- result.try(send_message(state, message.Flush))
-  recv_stream_rows(state, prepared, registry, timeout, [])
+  let decoders = resolve_row_decoders(prepared.result_fields, registry)
+  recv_stream_rows(state, prepared, decoders, timeout, [])
 }
 
 /// Finalize portal streaming: Sync to get ReadyForQuery
@@ -630,15 +637,15 @@ fn recv_bind_complete(
 fn recv_execute_rows(
   state: ConnectionState,
   prepared: PreparedStatement,
-  registry: Registry,
+  decoders: List(fn(BitArray) -> Result(Value, String)),
   timeout: Int,
   rows: List(List(Option(Value))),
 ) -> Result(#(String, List(List(Option(Value))), ConnectionState), Error) {
   use #(msg, state) <- result.try(receive_message(state, timeout))
   case msg {
     DataRow(values) -> {
-      let row = decode_binary_row(values, prepared.result_fields, registry)
-      recv_execute_rows(state, prepared, registry, timeout, [row, ..rows])
+      let row = decode_binary_row(values, decoders)
+      recv_execute_rows(state, prepared, decoders, timeout, [row, ..rows])
     }
     CommandComplete(tag) -> Ok(#(tag, rows, state))
     message.EmptyQueryResponse -> Ok(#("", rows, state))
@@ -652,14 +659,14 @@ fn recv_execute_rows(
       ))
     }
     NoticeResponse(_) ->
-      recv_execute_rows(state, prepared, registry, timeout, rows)
+      recv_execute_rows(state, prepared, decoders, timeout, rows)
     ParameterStatus(name: name, value: val) -> {
       let state =
         ConnectionState(
           ..state,
           parameters: dict.insert(state.parameters, name, val),
         )
-      recv_execute_rows(state, prepared, registry, timeout, rows)
+      recv_execute_rows(state, prepared, decoders, timeout, rows)
     }
     _ ->
       Error(error.ProtocolError(
@@ -671,15 +678,15 @@ fn recv_execute_rows(
 fn recv_stream_rows(
   state: ConnectionState,
   prepared: PreparedStatement,
-  registry: Registry,
+  decoders: List(fn(BitArray) -> Result(Value, String)),
   timeout: Int,
   rows: List(List(Option(Value))),
 ) -> Result(#(StreamChunk, ConnectionState), Error) {
   use #(msg, state) <- result.try(receive_message(state, timeout))
   case msg {
     DataRow(values) -> {
-      let row = decode_binary_row(values, prepared.result_fields, registry)
-      recv_stream_rows(state, prepared, registry, timeout, [row, ..rows])
+      let row = decode_binary_row(values, decoders)
+      recv_stream_rows(state, prepared, decoders, timeout, [row, ..rows])
     }
     CommandComplete(tag) -> Ok(#(StreamDone(tag, list_reverse(rows)), state))
     PortalSuspended -> Ok(#(StreamMore(list_reverse(rows)), state))
@@ -695,14 +702,14 @@ fn recv_stream_rows(
       ))
     }
     NoticeResponse(_) ->
-      recv_stream_rows(state, prepared, registry, timeout, rows)
+      recv_stream_rows(state, prepared, decoders, timeout, rows)
     ParameterStatus(name: name, value: val) -> {
       let state =
         ConnectionState(
           ..state,
           parameters: dict.insert(state.parameters, name, val),
         )
-      recv_stream_rows(state, prepared, registry, timeout, rows)
+      recv_stream_rows(state, prepared, decoders, timeout, rows)
     }
     _ ->
       Error(error.ProtocolError(
@@ -824,41 +831,47 @@ fn encode_params_loop(
   }
 }
 
-/// Decode a binary DataRow using result field OIDs and the codec registry
-fn decode_binary_row(
-  values: BitArray,
+/// Resolve codecs for result fields once, to avoid per-row registry lookups
+fn resolve_row_decoders(
   fields: List(RowField),
   reg: Registry,
-) -> List(Option(Value)) {
-  let raw_values = message.extract_row_values(values)
-  decode_values_with_codecs(raw_values, fields, reg)
-}
-
-fn decode_values_with_codecs(
-  raw_values: List(Option(BitArray)),
-  fields: List(RowField),
-  reg: Registry,
-) -> List(Option(Value)) {
-  case raw_values, fields {
-    [], [] -> []
-    [None, ..rest_vals], [_, ..rest_fields] ->
-      [None, ..decode_values_with_codecs(rest_vals, rest_fields, reg)]
-    [Some(bytes), ..rest_vals], [field, ..rest_fields] -> {
-      let decoded = case registry.lookup(reg, field.type_oid) {
-        Ok(codec) ->
-          case codec.decode(bytes) {
-            Ok(val) -> Some(val)
-            Error(_) -> Some(value.Text("<decode error>"))
-          }
-        Error(_) -> {
-          // Fallback: try to decode as text
-          case bit_array.to_string(bytes) {
-            Ok(s) -> Some(value.Text(s))
-            Error(_) -> Some(value.Bytea(bytes))
-          }
+) -> List(fn(BitArray) -> Result(Value, String)) {
+  list.map(fields, fn(field) {
+    case registry.lookup(reg, field.type_oid) {
+      Ok(codec) -> codec.decode
+      Error(_) -> fn(bytes) {
+        case bit_array.to_string(bytes) {
+          Ok(s) -> Ok(value.Text(s))
+          Error(_) -> Ok(value.Bytea(bytes))
         }
       }
-      [decoded, ..decode_values_with_codecs(rest_vals, rest_fields, reg)]
+    }
+  })
+}
+
+/// Decode a binary DataRow using pre-resolved decoders
+fn decode_binary_row(
+  values: BitArray,
+  decoders: List(fn(BitArray) -> Result(Value, String)),
+) -> List(Option(Value)) {
+  let raw_values = message.extract_row_values(values)
+  decode_values_with_decoders(raw_values, decoders)
+}
+
+fn decode_values_with_decoders(
+  raw_values: List(Option(BitArray)),
+  decoders: List(fn(BitArray) -> Result(Value, String)),
+) -> List(Option(Value)) {
+  case raw_values, decoders {
+    [], [] -> []
+    [None, ..rest_vals], [_, ..rest_decoders] ->
+      [None, ..decode_values_with_decoders(rest_vals, rest_decoders)]
+    [Some(bytes), ..rest_vals], [decoder, ..rest_decoders] -> {
+      let decoded = case decoder(bytes) {
+        Ok(val) -> Some(val)
+        Error(_) -> Some(value.Text("<decode error>"))
+      }
+      [decoded, ..decode_values_with_decoders(rest_vals, rest_decoders)]
     }
     _, _ -> []
   }

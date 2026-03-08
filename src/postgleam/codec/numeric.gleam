@@ -4,6 +4,7 @@
 ///
 /// We represent numeric as a string to preserve arbitrary precision.
 
+import gleam/bit_array
 import gleam/option
 import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
 import postgleam/value.{type Value, NaN, NegInfinity, Numeric, PosInfinity}
@@ -105,14 +106,26 @@ fn digits_to_string(
 }
 
 fn int_digits_to_string(digits: List(Int), is_first: Bool) -> String {
+  int_digits_to_bytes(digits, is_first, <<>>)
+}
+
+fn int_digits_to_bytes(
+  digits: List(Int),
+  is_first: Bool,
+  acc: BitArray,
+) -> String {
   case digits {
-    [] -> ""
+    [] ->
+      case bit_array.to_string(acc) {
+        Ok(s) -> s
+        Error(_) -> ""
+      }
     [d, ..rest] -> {
       let s = case is_first {
         True -> int_to_string(d)
         False -> pad_digit(d)
       }
-      s <> int_digits_to_string(rest, False)
+      int_digits_to_bytes(rest, False, <<acc:bits, s:utf8>>)
     }
   }
 }
@@ -128,9 +141,20 @@ fn frac_digits_to_string(digits: List(Int), scale: Int) -> String {
 }
 
 fn frac_raw(digits: List(Int)) -> String {
+  frac_raw_bytes(digits, <<>>)
+}
+
+fn frac_raw_bytes(digits: List(Int), acc: BitArray) -> String {
   case digits {
-    [] -> ""
-    [d, ..rest] -> pad_digit(d) <> frac_raw(rest)
+    [] ->
+      case bit_array.to_string(acc) {
+        Ok(s) -> s
+        Error(_) -> ""
+      }
+    [d, ..rest] -> {
+      let s = pad_digit(d)
+      frac_raw_bytes(rest, <<acc:bits, s:utf8>>)
+    }
   }
 }
 
@@ -183,7 +207,7 @@ fn encode_numeric_ffi(s: String) -> BitArray
 fn repeat_char(c: String, n: Int) -> String {
   case n <= 0 {
     True -> ""
-    False -> c <> repeat_char(c, n - 1)
+    False -> string_repeat(c, n)
   }
 }
 
@@ -195,3 +219,6 @@ fn string_length(s: String) -> Int
 
 @external(erlang, "binary", "part")
 fn string_slice(s: String, start: Int, len: Int) -> String
+
+@external(erlang, "string", "copies")
+fn string_repeat(s: String, n: Int) -> String

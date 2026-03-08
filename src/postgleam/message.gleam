@@ -667,16 +667,8 @@ fn extract_row_values_loop(
     <<>> -> acc
     <<-1:32-big-signed, remaining:bits>> ->
       extract_row_values_loop(remaining, [None, ..acc])
-    <<len:32-big-signed, remaining:bits>> -> {
-      case bit_array.byte_size(remaining) >= len {
-        True -> {
-          let assert Ok(value) = bit_array.slice(remaining, 0, len)
-          let assert Ok(next) = bit_array.slice(remaining, len, bit_array.byte_size(remaining) - len)
-          extract_row_values_loop(next, [Some(value), ..acc])
-        }
-        False -> acc
-      }
-    }
+    <<len:32-big-signed, value:bytes-size(len), remaining:bits>> ->
+      extract_row_values_loop(remaining, [Some(value), ..acc])
     _ -> acc
   }
 }

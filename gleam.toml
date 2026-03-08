@@ -1,5 +1,5 @@
 name = "postgleam"
-version = "0.2.0"
+version = "0.3.0"
 description = "A native Gleam PostgreSQL driver implementing the wire protocol"
 licences = ["Apache-2.0"]
 repository = { type = "github", user = "uncle-samm", repo = "postgleam" }
@@ -14,3 +14,4 @@ mug = ">= 3.0.0 and < 5.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 3.0.0"
+gleamy_bench = ">= 0.6.0 and < 1.0.0"
