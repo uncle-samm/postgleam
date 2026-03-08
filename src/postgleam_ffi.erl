@@ -2,8 +2,7 @@
 -export([crypto_exor/2, crypto_strong_rand_bytes/1, crypto_mac_hmac/2, md5_hash/1, sha256_hash/1,
          encode_float32/1, decode_float32/1, encode_numeric/1,
          int_shr/2, int_shl/2, int_band/2, int_bor/2, int_to_hex/1, hex_to_int/1,
-         ssl_upgrade/4, ssl_send/2, ssl_recv/2, ssl_close/1,
-         get_mug_socket/1]).
+         ssl_upgrade/4, ssl_send/2, ssl_recv/2, ssl_close/1]).
 
 crypto_exor(A, B) ->
     crypto:exor(A, B).
@@ -108,18 +107,12 @@ hex_to_int(S) ->
 
 %% SSL/TLS support — mirrors Postgrex's {mod, sock} pattern
 
-%% Extract the raw gen_tcp socket from a mug Socket opaque type.
-%% mug stores it as an Erlang port wrapped in an opaque type.
-get_mug_socket(MugSocket) ->
-    %% mug.Socket is just a wrapper around gen_tcp socket
-    %% The gleam representation is {socket, Port}
-    element(2, MugSocket).
-
 %% Upgrade a TCP socket to SSL, matching Postgrex's ssl_connect pattern.
+%% In mug 3.x, Socket is an external type — it IS the raw gen_tcp port directly.
 %% Verify=true: verify_peer with system CA certs + SNI
 %% Verify=false: verify_none (for self-signed / Neon)
 ssl_upgrade(MugSocket, Host, Timeout, Verify) ->
-    TcpSock = get_mug_socket(MugSocket),
+    TcpSock = MugSocket,
     HostCharlist = binary_to_list(Host),
     SslOpts = case Verify of
         true ->
