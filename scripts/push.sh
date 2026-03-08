@@ -2,15 +2,12 @@
 set -e
 
 branch=$(git branch --show-current)
-if [ "$branch" != "master" ]; then
-  echo "Not on master branch (on $branch). Merge to master first."
+if [ "$branch" != "main" ]; then
+  echo "Not on main branch (on $branch). Switch to main first."
   exit 1
 fi
 
-echo "Pushing master to origin..."
-git push origin master
-
-echo "Pushing master to main..."
-git push origin master:main
+echo "Pushing main to origin..."
+git push origin main
 
 echo "Done."
