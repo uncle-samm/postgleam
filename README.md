@@ -6,7 +6,7 @@
 A native Gleam PostgreSQL driver implementing the wire protocol from scratch. No NIFs, no C dependencies, no wrappers around existing Erlang/Elixir drivers — just Gleam + BitArrays + a small Erlang FFI for crypto and SSL.
 
 ```sh
-gleam add postgleam@1
+gleam add postgleam
 ```
 
 ## Quick start
