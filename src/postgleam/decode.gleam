@@ -133,6 +133,20 @@ pub fn uuid(val: Option(Value)) -> Result(BitArray, Error) {
   }
 }
 
+/// Decode a UUID value as a hyphenated string (e.g. "550e8400-e29b-41d4-a716-446655440000").
+pub fn uuid_string(val: Option(Value)) -> Result(String, Error) {
+  case val {
+    Some(value.Uuid(_) as v) ->
+      case value.uuid_to_string(v) {
+        Ok(s) -> Ok(s)
+        Error(_) -> Error(error.DecodeError("Failed to format UUID as string"))
+      }
+    Some(other) ->
+      Error(error.DecodeError("Expected Uuid, got " <> value_type_name(other)))
+    None -> Error(error.DecodeError("Expected Uuid, got NULL"))
+  }
+}
+
 /// Decode a JSON value (string).
 pub fn json(val: Option(Value)) -> Result(String, Error) {
   case val {

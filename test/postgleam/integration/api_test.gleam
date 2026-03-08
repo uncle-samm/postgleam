@@ -1,4 +1,5 @@
 import gleam/option.{None, Some}
+import gleam/string
 import gleeunit/should
 import postgleam
 import postgleam/config
@@ -474,6 +475,86 @@ pub fn transaction_with_conn_param_test() {
     })
 
   should.equal(count, 2)
+  postgleam.disconnect(conn)
+}
+
+// =============================================================================
+// DX: UUID string params and decoding
+// =============================================================================
+
+pub fn uuid_string_param_roundtrip_test() {
+  let cfg = test_config()
+  let assert Ok(conn) = postgleam.connect(cfg)
+
+  let uuid_str = "550e8400-e29b-41d4-a716-446655440000"
+
+  let assert Ok(response) =
+    postgleam.query_with(
+      conn,
+      "SELECT $1::uuid",
+      [postgleam.uuid_string(uuid_str)],
+      {
+        use id <- decode.element(0, decode.uuid_string)
+        decode.success(id)
+      },
+    )
+
+  should.equal(response.rows, [uuid_str])
+  postgleam.disconnect(conn)
+}
+
+pub fn uuid_string_param_in_table_test() {
+  let cfg = test_config()
+  let assert Ok(conn) = postgleam.connect(cfg)
+
+  let assert Ok(_) =
+    postgleam.simple_query(
+      conn,
+      "CREATE TEMP TABLE _uuid_test (id uuid PRIMARY KEY, name text)",
+    )
+
+  let uuid_str = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+
+  let assert Ok(_) =
+    postgleam.query(
+      conn,
+      "INSERT INTO _uuid_test (id, name) VALUES ($1, $2)",
+      [postgleam.uuid_string(uuid_str), postgleam.text("alice")],
+    )
+
+  let decoder = {
+    use id <- decode.element(0, decode.uuid_string)
+    use name <- decode.element(1, decode.text)
+    decode.success(#(id, name))
+  }
+
+  let assert Ok(row) =
+    postgleam.query_one(
+      conn,
+      "SELECT id, name FROM _uuid_test WHERE id = $1",
+      [postgleam.uuid_string(uuid_str)],
+      decoder,
+    )
+
+  should.equal(row, #(uuid_str, "alice"))
+  postgleam.disconnect(conn)
+}
+
+pub fn uuid_gen_random_decode_test() {
+  let cfg = test_config()
+  let assert Ok(conn) = postgleam.connect(cfg)
+
+  let decoder = {
+    use id <- decode.element(0, decode.uuid_string)
+    decode.success(id)
+  }
+
+  // gen_random_uuid() returns a UUID — we should be able to decode it as a string
+  let assert Ok(uuid_str) =
+    postgleam.query_one(conn, "SELECT gen_random_uuid()", [], decoder)
+
+  // Should be 36 chars in hyphenated format
+  should.equal(string.length(uuid_str), 36)
   postgleam.disconnect(conn)
 }
 

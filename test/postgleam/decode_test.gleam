@@ -103,6 +103,92 @@ pub fn decode_timestamptz_test() {
 }
 
 // =============================================================================
+// UUID string decoder
+// =============================================================================
+
+pub fn decode_uuid_string_test() {
+  let assert Ok(val) =
+    value.uuid_from_string("550e8400-e29b-41d4-a716-446655440000")
+  decode.uuid_string(Some(val))
+  |> should.equal(Ok("550e8400-e29b-41d4-a716-446655440000"))
+}
+
+pub fn decode_uuid_string_null_error_test() {
+  decode.uuid_string(None)
+  |> should.be_error()
+}
+
+pub fn decode_uuid_string_wrong_type_error_test() {
+  decode.uuid_string(Some(value.Text("not a uuid")))
+  |> should.be_error()
+}
+
+// =============================================================================
+// UUID parsing and formatting
+// =============================================================================
+
+pub fn uuid_from_string_hyphenated_test() {
+  let assert Ok(value.Uuid(bytes)) =
+    value.uuid_from_string("550e8400-e29b-41d4-a716-446655440000")
+  should.equal(
+    bytes,
+    <<0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4, 0xa7, 0x16, 0x44, 0x66,
+      0x55, 0x44, 0x00, 0x00>>,
+  )
+}
+
+pub fn uuid_from_string_no_dashes_test() {
+  let assert Ok(value.Uuid(bytes)) =
+    value.uuid_from_string("550e8400e29b41d4a716446655440000")
+  should.equal(
+    bytes,
+    <<0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4, 0xa7, 0x16, 0x44, 0x66,
+      0x55, 0x44, 0x00, 0x00>>,
+  )
+}
+
+pub fn uuid_from_string_uppercase_test() {
+  let assert Ok(value.Uuid(_)) =
+    value.uuid_from_string("550E8400-E29B-41D4-A716-446655440000")
+}
+
+pub fn uuid_from_string_invalid_test() {
+  value.uuid_from_string("not-a-uuid")
+  |> should.be_error()
+}
+
+pub fn uuid_from_string_wrong_length_test() {
+  value.uuid_from_string("550e8400-e29b-41d4-a716")
+  |> should.be_error()
+}
+
+pub fn uuid_from_string_invalid_hex_test() {
+  value.uuid_from_string("xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx")
+  |> should.be_error()
+}
+
+pub fn uuid_roundtrip_test() {
+  let input = "550e8400-e29b-41d4-a716-446655440000"
+  let assert Ok(val) = value.uuid_from_string(input)
+  let assert Ok(output) = value.uuid_to_string(val)
+  should.equal(output, input)
+}
+
+pub fn uuid_roundtrip_zeros_test() {
+  let input = "00000000-0000-0000-0000-000000000000"
+  let assert Ok(val) = value.uuid_from_string(input)
+  let assert Ok(output) = value.uuid_to_string(val)
+  should.equal(output, input)
+}
+
+pub fn uuid_roundtrip_max_test() {
+  let input = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+  let assert Ok(val) = value.uuid_from_string(input)
+  let assert Ok(output) = value.uuid_to_string(val)
+  should.equal(output, input)
+}
+
+// =============================================================================
 // Optional decoder
 // =============================================================================
 

@@ -227,6 +227,15 @@ pub fn uuid(val: BitArray) -> Param {
   Some(value.Uuid(val))
 }
 
+/// Create a UUID parameter from a string like "550e8400-e29b-41d4-a716-446655440000".
+/// Returns None (NULL) if the string is not a valid UUID.
+pub fn uuid_string(val: String) -> Param {
+  case value.uuid_from_string(val) {
+    Ok(v) -> Some(v)
+    Error(_) -> None
+  }
+}
+
 /// Create a JSON parameter.
 pub fn json(val: String) -> Param {
   Some(value.Json(val))
