@@ -213,6 +213,200 @@ pub fn timestamptz(val: Option(Value)) -> Result(Int, Error) {
   }
 }
 
+/// Decode a time value (microseconds since midnight).
+pub fn time(val: Option(Value)) -> Result(Int, Error) {
+  case val {
+    Some(value.Time(t)) -> Ok(t)
+    Some(other) ->
+      Error(error.DecodeError("Expected Time, got " <> value_type_name(other)))
+    None -> Error(error.DecodeError("Expected Time, got NULL"))
+  }
+}
+
+/// Decode a timetz value as #(microseconds, tz_offset_seconds).
+pub fn timetz(val: Option(Value)) -> Result(#(Int, Int), Error) {
+  case val {
+    Some(value.TimeTz(us, tz)) -> Ok(#(us, tz))
+    Some(other) ->
+      Error(error.DecodeError(
+        "Expected TimeTz, got " <> value_type_name(other),
+      ))
+    None -> Error(error.DecodeError("Expected TimeTz, got NULL"))
+  }
+}
+
+/// Decode an interval value as #(microseconds, days, months).
+pub fn interval(val: Option(Value)) -> Result(#(Int, Int, Int), Error) {
+  case val {
+    Some(value.Interval(us, days, months)) -> Ok(#(us, days, months))
+    Some(other) ->
+      Error(error.DecodeError(
+        "Expected Interval, got " <> value_type_name(other),
+      ))
+    None -> Error(error.DecodeError("Expected Interval, got NULL"))
+  }
+}
+
+/// Decode an XML value (string).
+pub fn xml(val: Option(Value)) -> Result(String, Error) {
+  case val {
+    Some(value.Xml(s)) -> Ok(s)
+    Some(other) ->
+      Error(error.DecodeError("Expected Xml, got " <> value_type_name(other)))
+    None -> Error(error.DecodeError("Expected Xml, got NULL"))
+  }
+}
+
+/// Decode a JSONPath value (string).
+pub fn jsonpath(val: Option(Value)) -> Result(String, Error) {
+  case val {
+    Some(value.Jsonpath(s)) -> Ok(s)
+    Some(other) ->
+      Error(error.DecodeError(
+        "Expected Jsonpath, got " <> value_type_name(other),
+      ))
+    None -> Error(error.DecodeError("Expected Jsonpath, got NULL"))
+  }
+}
+
+/// Decode a money value (int64 cents).
+pub fn money(val: Option(Value)) -> Result(Int, Error) {
+  case val {
+    Some(value.Money(n)) -> Ok(n)
+    Some(other) ->
+      Error(error.DecodeError("Expected Money, got " <> value_type_name(other)))
+    None -> Error(error.DecodeError("Expected Money, got NULL"))
+  }
+}
+
+/// Decode a point value as #(x, y).
+pub fn point(val: Option(Value)) -> Result(#(Float, Float), Error) {
+  case val {
+    Some(value.Point(x, y)) -> Ok(#(x, y))
+    Some(other) ->
+      Error(error.DecodeError("Expected Point, got " <> value_type_name(other)))
+    None -> Error(error.DecodeError("Expected Point, got NULL"))
+  }
+}
+
+/// Decode a line value as #(a, b, c) coefficients.
+pub fn line(val: Option(Value)) -> Result(#(Float, Float, Float), Error) {
+  case val {
+    Some(value.Line(a, b, c)) -> Ok(#(a, b, c))
+    Some(other) ->
+      Error(error.DecodeError("Expected Line, got " <> value_type_name(other)))
+    None -> Error(error.DecodeError("Expected Line, got NULL"))
+  }
+}
+
+/// Decode a line segment as #(x1, y1, x2, y2).
+pub fn lseg(
+  val: Option(Value),
+) -> Result(#(Float, Float, Float, Float), Error) {
+  case val {
+    Some(value.Lseg(x1, y1, x2, y2)) -> Ok(#(x1, y1, x2, y2))
+    Some(other) ->
+      Error(error.DecodeError("Expected Lseg, got " <> value_type_name(other)))
+    None -> Error(error.DecodeError("Expected Lseg, got NULL"))
+  }
+}
+
+/// Decode a box as #(x1, y1, x2, y2) (upper-right, lower-left).
+pub fn box(
+  val: Option(Value),
+) -> Result(#(Float, Float, Float, Float), Error) {
+  case val {
+    Some(value.Box(x1, y1, x2, y2)) -> Ok(#(x1, y1, x2, y2))
+    Some(other) ->
+      Error(error.DecodeError("Expected Box, got " <> value_type_name(other)))
+    None -> Error(error.DecodeError("Expected Box, got NULL"))
+  }
+}
+
+/// Decode a circle as #(x, y, radius).
+pub fn circle(val: Option(Value)) -> Result(#(Float, Float, Float), Error) {
+  case val {
+    Some(value.Circle(x, y, r)) -> Ok(#(x, y, r))
+    Some(other) ->
+      Error(error.DecodeError(
+        "Expected Circle, got " <> value_type_name(other),
+      ))
+    None -> Error(error.DecodeError("Expected Circle, got NULL"))
+  }
+}
+
+/// Decode a path as #(closed, points).
+pub fn path(
+  val: Option(Value),
+) -> Result(#(Bool, List(#(Float, Float))), Error) {
+  case val {
+    Some(value.Path(closed, pts)) -> Ok(#(closed, pts))
+    Some(other) ->
+      Error(error.DecodeError("Expected Path, got " <> value_type_name(other)))
+    None -> Error(error.DecodeError("Expected Path, got NULL"))
+  }
+}
+
+/// Decode a polygon as a list of vertices.
+pub fn polygon(
+  val: Option(Value),
+) -> Result(List(#(Float, Float)), Error) {
+  case val {
+    Some(value.Polygon(pts)) -> Ok(pts)
+    Some(other) ->
+      Error(error.DecodeError(
+        "Expected Polygon, got " <> value_type_name(other),
+      ))
+    None -> Error(error.DecodeError("Expected Polygon, got NULL"))
+  }
+}
+
+/// Decode an inet/cidr value as #(family, address, netmask).
+pub fn inet(val: Option(Value)) -> Result(#(Int, BitArray, Int), Error) {
+  case val {
+    Some(value.Inet(family, addr, mask)) -> Ok(#(family, addr, mask))
+    Some(other) ->
+      Error(error.DecodeError("Expected Inet, got " <> value_type_name(other)))
+    None -> Error(error.DecodeError("Expected Inet, got NULL"))
+  }
+}
+
+/// Decode a macaddr value (6-byte binary).
+pub fn macaddr(val: Option(Value)) -> Result(BitArray, Error) {
+  case val {
+    Some(value.Macaddr(b)) -> Ok(b)
+    Some(other) ->
+      Error(error.DecodeError(
+        "Expected Macaddr, got " <> value_type_name(other),
+      ))
+    None -> Error(error.DecodeError("Expected Macaddr, got NULL"))
+  }
+}
+
+/// Decode a macaddr8 value (8-byte binary).
+pub fn macaddr8(val: Option(Value)) -> Result(BitArray, Error) {
+  case val {
+    Some(value.Macaddr8(b)) -> Ok(b)
+    Some(other) ->
+      Error(error.DecodeError(
+        "Expected Macaddr8, got " <> value_type_name(other),
+      ))
+    None -> Error(error.DecodeError("Expected Macaddr8, got NULL"))
+  }
+}
+
+/// Decode a bit/varbit value as #(bit_count, data).
+pub fn bit_string(val: Option(Value)) -> Result(#(Int, BitArray), Error) {
+  case val {
+    Some(value.BitString(count, data)) -> Ok(#(count, data))
+    Some(other) ->
+      Error(error.DecodeError(
+        "Expected BitString, got " <> value_type_name(other),
+      ))
+    None -> Error(error.DecodeError("Expected BitString, got NULL"))
+  }
+}
+
 /// Make any value decoder nullable (NULL-safe).
 /// Returns `Ok(None)` for NULL, `Ok(Some(val))` for non-NULL.
 pub fn optional(decoder: ValueDecoder(a)) -> ValueDecoder(Option(a)) {

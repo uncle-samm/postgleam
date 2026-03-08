@@ -1,5 +1,5 @@
 -module(bench_ffi).
--export([get_args/0, git_commit_hash/0, timestamp_iso8601/0, write_file/2, read_file/1]).
+-export([get_args/0, git_commit_hash/0, timestamp_iso8601/0, write_file/2, read_file/1, now_ms/0]).
 
 get_args() ->
     [list_to_binary(A) || A <- init:get_plain_arguments()].
@@ -21,3 +21,6 @@ read_file(Path) ->
         {ok, Content} -> {ok, Content};
         {error, Reason} -> {error, atom_to_binary(Reason)}
     end.
+
+now_ms() ->
+    erlang:system_time(millisecond).

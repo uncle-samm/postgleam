@@ -6,11 +6,13 @@ import bench/compare
 import bench/decode_bench
 import bench/integration_bench
 import bench/message_bench
+import bench/realworld_bench
 import bench/registry_bench
 import bench/runner
 import bench/uuid_bench
 import gleam/io
 import gleam/list
+import postgleam/config
 
 pub fn main() {
   let args = get_args()
@@ -18,15 +20,18 @@ pub fn main() {
   case args {
     ["pure"] -> run_pure()
     ["integration"] -> run_integration()
+    ["realworld"] -> run_realworld()
     ["compare", baseline, current] -> compare.run(baseline, current)
     ["all"] -> {
       run_pure()
       run_integration()
+      run_realworld()
     }
     _ -> {
       io.println("Usage:")
       io.println("  make bench-pure          Run pure Gleam benchmarks")
       io.println("  make bench-integration   Run database benchmarks")
+      io.println("  make bench-realworld     Run real-world benchmarks")
       io.println("  make bench               Run all benchmarks")
       io.println(
         "  make bench-compare BASELINE=... CURRENT=...  Compare results",
@@ -75,6 +80,12 @@ fn run_integration() -> Nil {
     Ok(_) -> io.println("Results written to bench/results/integration.json")
     Error(e) -> io.println("Failed to write results: " <> e)
   }
+}
+
+fn run_realworld() -> Nil {
+  let cfg = config.default() |> config.database("postgleam_test")
+  let _results = realworld_bench.run(cfg)
+  Nil
 }
 
 @external(erlang, "bench_ffi", "get_args")

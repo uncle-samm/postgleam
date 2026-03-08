@@ -266,6 +266,56 @@ pub fn timestamptz(val: Int) -> Param {
   Some(value.Timestamptz(val))
 }
 
+/// Create a time parameter (microseconds since midnight).
+pub fn time(val: Int) -> Param {
+  Some(value.Time(val))
+}
+
+/// Create a timetz parameter (microseconds since midnight, tz offset in seconds).
+pub fn timetz(microseconds: Int, tz_offset: Int) -> Param {
+  Some(value.TimeTz(microseconds, tz_offset))
+}
+
+/// Create an interval parameter (microseconds, days, months).
+pub fn interval(microseconds: Int, days: Int, months: Int) -> Param {
+  Some(value.Interval(microseconds, days, months))
+}
+
+/// Create an XML parameter.
+pub fn xml(val: String) -> Param {
+  Some(value.Xml(val))
+}
+
+/// Create a JSONPath parameter.
+pub fn jsonpath(val: String) -> Param {
+  Some(value.Jsonpath(val))
+}
+
+/// Create a money parameter (int64 cents).
+pub fn money(val: Int) -> Param {
+  Some(value.Money(val))
+}
+
+/// Create a point parameter (x, y).
+pub fn point(x: Float, y: Float) -> Param {
+  Some(value.Point(x, y))
+}
+
+/// Create a circle parameter (center x, center y, radius).
+pub fn circle(x: Float, y: Float, radius: Float) -> Param {
+  Some(value.Circle(x, y, radius))
+}
+
+/// Create a macaddr parameter (6-byte binary).
+pub fn macaddr(val: BitArray) -> Param {
+  Some(value.Macaddr(val))
+}
+
+/// Create a macaddr8 parameter (8-byte binary).
+pub fn macaddr8(val: BitArray) -> Param {
+  Some(value.Macaddr8(val))
+}
+
 /// Create a nullable parameter from an Option value.
 ///
 /// ```gleam

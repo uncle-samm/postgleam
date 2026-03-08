@@ -1,4 +1,4 @@
-.PHONY: build test push tag publish release bench bench-pure bench-integration bench-compare
+.PHONY: build test push tag publish release bench bench-pure bench-integration bench-realworld bench-compare
 
 build:
 	gleam build
@@ -24,6 +24,9 @@ bench-pure:
 
 bench-integration:
 	gleam build && erl -pa build/dev/erlang/*/ebin -noshell -run bench_runner main -- integration
+
+bench-realworld:
+	gleam build && erl -pa build/dev/erlang/*/ebin -noshell -run bench_runner main -- realworld
 
 bench-compare:
 	@if [ -z "$(BASELINE)" ] || [ -z "$(CURRENT)" ]; then \
