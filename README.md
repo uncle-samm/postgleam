@@ -114,18 +114,22 @@ let assert Ok(user) =
 
 ```gleam
 // Typed constructors — no wrapping needed
-postgleam.query(conn, "SELECT $1::int4, $2::text, $3::bool", [
-  postgleam.int(42),
-  postgleam.text("hello"),
+// PostgreSQL infers types from table columns, so casts are rarely needed
+postgleam.query(conn, "INSERT INTO users (name, age, active) VALUES ($1, $2, $3)", [
+  postgleam.text("alice"),
+  postgleam.int(30),
   postgleam.bool(True),
 ])
 
 // NULL
-postgleam.query(conn, "SELECT $1::int4", [postgleam.null()])
+postgleam.query(conn, "UPDATE users SET email = $1 WHERE id = $2", [
+  postgleam.null(),
+  postgleam.int(1),
+])
 
 // Nullable from Option values
 let maybe_email: Option(String) = None
-postgleam.query(conn, "INSERT INTO users (email) VALUES ($1::text)", [
+postgleam.query(conn, "INSERT INTO users (email) VALUES ($1)", [
   postgleam.nullable(maybe_email, postgleam.text),
 ])
 ```
