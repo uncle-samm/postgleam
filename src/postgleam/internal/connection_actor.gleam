@@ -25,9 +25,13 @@ pub type Message {
     params: List(Option(Value)),
     reply: Subject(Result(ExtendedQueryResult, Error)),
   )
-  /// Execute a simple (text) query
+  /// Execute a simple (text) query. `timeout` is the per-call socket
+  /// timeout (ms) — lets callers (e.g. the pool's health check) bound
+  /// how long the actor blocks in `gen_tcp:recv` on a dead socket
+  /// instead of waiting for `config.timeout`.
   SimpleQuery(
     sql: String,
+    timeout: Int,
     reply: Subject(
       Result(List(connection.SimpleQueryResult), Error),
     ),
@@ -89,15 +93,24 @@ pub type ActorState {
 pub fn start(
   config: Config,
 ) -> Result(actor.Started(Subject(Message)), actor.StartError) {
+  start_with_registry(config, defaults.build_registry())
+}
+
+/// Start the connection actor with a pre-built registry.
+/// Used by the pool to share an enriched registry (with enum OIDs etc.)
+/// across all connection actors.
+pub fn start_with_registry(
+  config: Config,
+  registry: Registry,
+) -> Result(actor.Started(Subject(Message)), actor.StartError) {
   actor.new_with_initialiser(config.connect_timeout + 1000, fn(subject) {
     case connection.connect(config) {
       Ok(conn) -> {
-        let reg = defaults.build_registry()
         let state =
           ActorState(
             conn: conn,
             config: config,
-            registry: reg,
+            registry: registry,
             cache: dict.new(),
             cache_order: [],
             next_id: 0,
@@ -228,8 +241,8 @@ fn handle_message(
       }
     }
 
-    SimpleQuery(sql, reply) -> {
-      case connection.simple_query(state.conn, sql, state.config.timeout) {
+    SimpleQuery(sql, timeout, reply) -> {
+      case connection.simple_query(state.conn, sql, timeout) {
         Ok(#(results, conn)) -> {
           process.send(reply, Ok(results))
           actor.continue(ActorState(..state, conn: conn))
