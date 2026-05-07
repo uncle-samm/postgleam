@@ -23,7 +23,7 @@ jobs:
         run: make bench-pure
 
       - name: Upload benchmark report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pure-benchmark-results
           path: bench/results/pure*.json
