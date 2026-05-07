@@ -1,9 +1,10 @@
 /// PostgreSQL uuid codec - binary format
 /// Wire: 16 bytes raw UUID (RFC 4122)
-
 import gleam/bit_array
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Uuid}
 
 /// OID for uuid

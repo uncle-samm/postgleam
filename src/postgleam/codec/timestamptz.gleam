@@ -1,9 +1,10 @@
 /// PostgreSQL timestamptz codec - binary format
 /// Wire: 8 bytes int64 = microseconds since 2000-01-01 00:00:00 UTC
 /// Special: int64 max = +infinity, int64 min = -infinity
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, NegInfinity, PosInfinity, Timestamptz}
 
 pub const oid = 1184
@@ -19,7 +20,13 @@ pub fn matcher() -> CodecMatcher {
 }
 
 fn build(type_oid: Int) -> Codec {
-  Codec(type_name: "timestamptz", oid: type_oid, format: Binary, encode: encode, decode: decode)
+  Codec(
+    type_name: "timestamptz",
+    oid: type_oid,
+    format: Binary,
+    encode: encode,
+    decode: decode,
+  )
 }
 
 pub fn encode(val: Value) -> Result(BitArray, String) {

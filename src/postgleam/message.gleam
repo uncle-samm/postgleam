@@ -131,23 +131,31 @@ pub type FrontendMessage {
 pub fn encode_frontend(msg: FrontendMessage) -> BitArray {
   case msg {
     StartupMessage(params) -> encode_startup(params)
-    PasswordMessage(password) -> encode_with_type("p", <<password_bytes(password):bits>>)
+    PasswordMessage(password) ->
+      encode_with_type("p", <<password_bytes(password):bits>>)
     SASLInitialResponse(mechanism, data) -> encode_sasl_initial(mechanism, data)
     SASLResponse(data) -> encode_with_type("p", data)
-    SimpleQuery(statement) -> encode_with_type("Q", <<string_bytes(statement):bits, 0>>)
+    SimpleQuery(statement) ->
+      encode_with_type("Q", <<string_bytes(statement):bits, 0>>)
     Parse(name, statement, oids) -> encode_parse(name, statement, oids)
-    Describe(type_, name) -> encode_with_type("D", <<describe_byte(type_), string_bytes(name):bits, 0>>)
-    Bind(portal, statement, pf, params, rf) -> encode_bind(portal, statement, pf, params, rf)
-    Execute(portal, max_rows) -> encode_with_type("E", <<string_bytes(portal):bits, 0, max_rows:32-big>>)
-    Close(type_, name) -> encode_with_type("C", <<describe_byte(type_), string_bytes(name):bits, 0>>)
+    Describe(type_, name) ->
+      encode_with_type("D", <<describe_byte(type_), string_bytes(name):bits, 0>>)
+    Bind(portal, statement, pf, params, rf) ->
+      encode_bind(portal, statement, pf, params, rf)
+    Execute(portal, max_rows) ->
+      encode_with_type("E", <<string_bytes(portal):bits, 0, max_rows:32-big>>)
+    Close(type_, name) ->
+      encode_with_type("C", <<describe_byte(type_), string_bytes(name):bits, 0>>)
     Sync -> encode_with_type("S", <<>>)
     Flush -> encode_with_type("H", <<>>)
     Terminate -> encode_with_type("X", <<>>)
     SSLRequest -> encode_no_type(<<1234:16-big, 5679:16-big>>)
-    CancelRequest(pid, key) -> encode_no_type(<<1234:16-big, 5678:16-big, pid:32-big, key:32-big>>)
+    CancelRequest(pid, key) ->
+      encode_no_type(<<1234:16-big, 5678:16-big, pid:32-big, key:32-big>>)
     CopyDataMsg(data) -> encode_with_type("d", data)
     CopyDoneMsg -> encode_with_type("c", <<>>)
-    CopyFail(message) -> encode_with_type("f", <<string_bytes(message):bits, 0>>)
+    CopyFail(message) ->
+      encode_with_type("f", <<string_bytes(message):bits, 0>>)
   }
 }
 
@@ -159,7 +167,10 @@ fn encode_startup(params: List(#(String, String))) -> BitArray {
   <<size:32-big, data:bits>>
 }
 
-fn encode_startup_params(params: List(#(String, String)), acc: BitArray) -> BitArray {
+fn encode_startup_params(
+  params: List(#(String, String)),
+  acc: BitArray,
+) -> BitArray {
   case params {
     [] -> acc
     [#(key, value), ..rest] -> {
@@ -172,7 +183,14 @@ fn encode_startup_params(params: List(#(String, String)), acc: BitArray) -> BitA
 fn encode_parse(name: String, statement: String, oids: List(Int)) -> BitArray {
   let num_oids = list.length(oids)
   let oid_bytes = encode_oids(oids, <<>>)
-  let data = <<string_bytes(name):bits, 0, string_bytes(statement):bits, 0, num_oids:16-big, oid_bytes:bits>>
+  let data = <<
+    string_bytes(name):bits,
+    0,
+    string_bytes(statement):bits,
+    0,
+    num_oids:16-big,
+    oid_bytes:bits,
+  >>
   encode_with_type("P", data)
 }
 
@@ -197,11 +215,16 @@ fn encode_bind(
   let num_params = list.length(params)
   let param_bytes = encode_params(params, <<>>)
   let data = <<
-    string_bytes(portal):bits, 0,
-    string_bytes(statement):bits, 0,
-    num_pf:16-big, pf_bytes:bits,
-    num_params:16-big, param_bytes:bits,
-    num_rf:16-big, rf_bytes:bits,
+    string_bytes(portal):bits,
+    0,
+    string_bytes(statement):bits,
+    0,
+    num_pf:16-big,
+    pf_bytes:bits,
+    num_params:16-big,
+    param_bytes:bits,
+    num_rf:16-big,
+    rf_bytes:bits,
   >>
   encode_with_type("B", data)
 }
@@ -248,8 +271,10 @@ fn encode_no_type(data: BitArray) -> BitArray {
 
 fn describe_byte(type_: DescribeType) -> Int {
   case type_ {
-    DescribeStatement -> 0x53  // 'S'
-    DescribePortal -> 0x50     // 'P'
+    DescribeStatement -> 0x53
+    // 'S'
+    DescribePortal -> 0x50
+    // 'P'
   }
 }
 
@@ -289,7 +314,8 @@ pub fn decode_backend(buffer: BitArray) -> DecodeResult {
         True -> Incomplete
         False -> {
           let assert Ok(payload) = bit_array.slice(buffer, 5, payload_size)
-          let assert Ok(rest) = bit_array.slice(buffer, total_size, buf_size - total_size)
+          let assert Ok(rest) =
+            bit_array.slice(buffer, total_size, buf_size - total_size)
           decode_message(type_byte, payload, payload_size, rest)
         }
       }
@@ -369,14 +395,17 @@ fn decode_auth(payload: BitArray, _size: Int, rest: BitArray) -> DecodeResult {
       }
     }
     <<7:32-big-signed>> -> Decoded(AuthenticationMsg(AuthGss), rest)
-    <<8:32-big-signed, data:bits>> -> Decoded(AuthenticationMsg(AuthGssContinue(data: data)), rest)
+    <<8:32-big-signed, data:bits>> ->
+      Decoded(AuthenticationMsg(AuthGssContinue(data: data)), rest)
     <<9:32-big-signed>> -> Decoded(AuthenticationMsg(AuthSspi), rest)
     <<10:32-big-signed, mechanisms_data:bits>> -> {
       let mechanisms = decode_sasl_mechanisms(mechanisms_data, [])
       Decoded(AuthenticationMsg(AuthSasl(mechanisms: mechanisms)), rest)
     }
-    <<11:32-big-signed, data:bits>> -> Decoded(AuthenticationMsg(AuthSaslContinue(data: data)), rest)
-    <<12:32-big-signed, data:bits>> -> Decoded(AuthenticationMsg(AuthSaslFinal(data: data)), rest)
+    <<11:32-big-signed, data:bits>> ->
+      Decoded(AuthenticationMsg(AuthSaslContinue(data: data)), rest)
+    <<12:32-big-signed, data:bits>> ->
+      Decoded(AuthenticationMsg(AuthSaslFinal(data: data)), rest)
     _ -> DecodeFailed("Unknown auth type")
   }
 }
@@ -387,7 +416,8 @@ fn decode_sasl_mechanisms(data: BitArray, acc: List(String)) -> List(String) {
     <<>> -> list.reverse(acc)
     _ -> {
       case decode_cstring(data) {
-        Ok(#(mechanism, remaining)) -> decode_sasl_mechanisms(remaining, [mechanism, ..acc])
+        Ok(#(mechanism, remaining)) ->
+          decode_sasl_mechanisms(remaining, [mechanism, ..acc])
         Error(_) -> list.reverse(acc)
       }
     }
@@ -404,9 +434,12 @@ fn decode_backend_key(payload: BitArray, rest: BitArray) -> DecodeResult {
 
 fn decode_ready(payload: BitArray, rest: BitArray) -> DecodeResult {
   case payload {
-    <<0x49>> -> Decoded(ReadyForQuery(Idle), rest)          // 'I'
-    <<0x54>> -> Decoded(ReadyForQuery(InTransaction), rest)  // 'T'
-    <<0x45>> -> Decoded(ReadyForQuery(FailedTransaction), rest) // 'E'
+    <<0x49>> -> Decoded(ReadyForQuery(Idle), rest)
+    // 'I'
+    <<0x54>> -> Decoded(ReadyForQuery(InTransaction), rest)
+    // 'T'
+    <<0x45>> -> Decoded(ReadyForQuery(FailedTransaction), rest)
+    // 'E'
     _ -> DecodeFailed("Invalid ReadyForQuery status")
   }
 }
@@ -415,7 +448,8 @@ fn decode_parameter_status(payload: BitArray, rest: BitArray) -> DecodeResult {
   case decode_cstring(payload) {
     Ok(#(name, remaining)) -> {
       case decode_cstring(remaining) {
-        Ok(#(value, _)) -> Decoded(ParameterStatus(name: name, value: value), rest)
+        Ok(#(value, _)) ->
+          Decoded(ParameterStatus(name: name, value: value), rest)
         Error(_) -> DecodeFailed("Invalid ParameterStatus value")
       }
     }
@@ -446,23 +480,29 @@ fn decode_row_fields(
       case decode_cstring(data) {
         Ok(#(name, remaining)) -> {
           case remaining {
-            <<table_oid:32-big-unsigned, column:16-big-signed,
-              type_oid:32-big-unsigned, type_size:16-big-signed,
-              type_mod:32-big-signed, format_code:16-big-signed,
-              field_rest:bits>> -> {
+            <<
+              table_oid:32-big-unsigned,
+              column:16-big-signed,
+              type_oid:32-big-unsigned,
+              type_size:16-big-signed,
+              type_mod:32-big-signed,
+              format_code:16-big-signed,
+              field_rest:bits,
+            >> -> {
               let format = case format_code {
                 1 -> BinaryFormat
                 _ -> TextFormat
               }
-              let field = RowField(
-                name: name,
-                table_oid: table_oid,
-                column: column,
-                type_oid: type_oid,
-                type_size: type_size,
-                type_mod: type_mod,
-                format: format,
-              )
+              let field =
+                RowField(
+                  name: name,
+                  table_oid: table_oid,
+                  column: column,
+                  type_oid: type_oid,
+                  type_size: type_size,
+                  type_mod: type_mod,
+                  format: format,
+                )
               decode_row_fields(field_rest, count - 1, [field, ..acc])
             }
             _ -> Error("Invalid row field data")
@@ -503,7 +543,10 @@ fn decode_error_notice(
   }
 }
 
-fn decode_error_fields(data: BitArray, acc: Dict(String, String)) -> Dict(String, String) {
+fn decode_error_fields(
+  data: BitArray,
+  acc: Dict(String, String),
+) -> Dict(String, String) {
   case data {
     <<0>> -> acc
     <<>> -> acc
@@ -522,24 +565,42 @@ fn decode_error_fields(data: BitArray, acc: Dict(String, String)) -> Dict(String
 
 fn decode_field_type(byte: Int) -> String {
   case byte {
-    0x53 -> "severity"     // 'S'
-    0x56 -> "severity_v"   // 'V' (non-localized severity, PG 9.6+)
-    0x43 -> "code"         // 'C'
-    0x4D -> "message"      // 'M'
-    0x44 -> "detail"       // 'D'
-    0x48 -> "hint"         // 'H'
-    0x50 -> "position"     // 'P'
-    0x70 -> "internal_position" // 'p'
-    0x71 -> "internal_query"    // 'q'
-    0x57 -> "where"        // 'W'
-    0x73 -> "schema"       // 's'
-    0x74 -> "table"        // 't'
-    0x63 -> "column"       // 'c'
-    0x64 -> "data_type"    // 'd'
-    0x6E -> "constraint"   // 'n'
-    0x46 -> "file"         // 'F'
-    0x4C -> "line"         // 'L'
-    0x52 -> "routine"      // 'R'
+    0x53 -> "severity"
+    // 'S'
+    0x56 -> "severity_v"
+    // 'V' (non-localized severity, PG 9.6+)
+    0x43 -> "code"
+    // 'C'
+    0x4D -> "message"
+    // 'M'
+    0x44 -> "detail"
+    // 'D'
+    0x48 -> "hint"
+    // 'H'
+    0x50 -> "position"
+    // 'P'
+    0x70 -> "internal_position"
+    // 'p'
+    0x71 -> "internal_query"
+    // 'q'
+    0x57 -> "where"
+    // 'W'
+    0x73 -> "schema"
+    // 's'
+    0x74 -> "table"
+    // 't'
+    0x63 -> "column"
+    // 'c'
+    0x64 -> "data_type"
+    // 'd'
+    0x6E -> "constraint"
+    // 'n'
+    0x46 -> "file"
+    // 'F'
+    0x4C -> "line"
+    // 'L'
+    0x52 -> "routine"
+    // 'R'
     _ -> "unknown"
   }
 }
@@ -551,11 +612,14 @@ fn decode_notification(payload: BitArray, rest: BitArray) -> DecodeResult {
         Ok(#(channel, remaining2)) -> {
           case decode_cstring(remaining2) {
             Ok(#(payload_str, _)) ->
-              Decoded(NotificationResponse(
-                pg_pid: pg_pid,
-                channel: channel,
-                payload: payload_str,
-              ), rest)
+              Decoded(
+                NotificationResponse(
+                  pg_pid: pg_pid,
+                  channel: channel,
+                  payload: payload_str,
+                ),
+                rest,
+              )
             Error(_) -> DecodeFailed("Invalid notification payload")
           }
         }
@@ -604,7 +668,11 @@ fn decode_copy_response(
   }
 }
 
-fn decode_column_formats(data: BitArray, count: Int, acc: List(Format)) -> List(Format) {
+fn decode_column_formats(
+  data: BitArray,
+  count: Int,
+  acc: List(Format),
+) -> List(Format) {
   case count {
     0 -> list.reverse(acc)
     _ -> {
@@ -634,7 +702,10 @@ pub fn decode_cstring(data: BitArray) -> Result(#(String, BitArray), Nil) {
   decode_cstring_loop(data, <<>>)
 }
 
-fn decode_cstring_loop(data: BitArray, acc: BitArray) -> Result(#(String, BitArray), Nil) {
+fn decode_cstring_loop(
+  data: BitArray,
+  acc: BitArray,
+) -> Result(#(String, BitArray), Nil) {
   case data {
     <<0, remaining:bits>> -> {
       case bit_array.to_string(acc) {

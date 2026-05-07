@@ -1,6 +1,5 @@
 /// SCRAM-SHA-256 authentication implementation
 /// Based on RFC 5802 / 7677
-
 import gleam/bit_array
 import gleam/int
 import gleam/list
@@ -132,7 +131,9 @@ pub fn verify_server(
 
 /// Extract the client-first-bare from a client-first message.
 /// The client-first message is "n,,n=,r=<nonce>" — the bare part is "n=,r=<nonce>"
-pub fn extract_client_first_bare(client_first_data: BitArray) -> Result(String, Nil) {
+pub fn extract_client_first_bare(
+  client_first_data: BitArray,
+) -> Result(String, Nil) {
   use s <- result.try(bit_array.to_string(client_first_data))
   // Skip the "n,," prefix (GS2 header)
   case string.split_once(s, ",,") {
@@ -195,13 +196,12 @@ fn base64_encode(data: BitArray) -> String {
   s
 }
 
-@external(erlang, "base64", "decode")
-fn base64_decode_raw(data: BitArray) -> BitArray
+@external(erlang, "postgleam_ffi", "base64_decode")
+fn base64_decode_raw(data: BitArray) -> Result(BitArray, Nil)
 
 fn base64_decode(s: String) -> Result(BitArray, Nil) {
   let data = bit_array.from_string(s)
-  // base64:decode can crash on invalid input, but we'll trust it for now
-  Ok(base64_decode_raw(data))
+  base64_decode_raw(data)
 }
 
 // --- Parse "key=value,key=value" format ---
@@ -217,7 +217,10 @@ fn parse_server_data(data: String) -> List(#(String, String)) {
   })
 }
 
-fn get_field(fields: List(#(String, String)), key: String) -> Result(String, Nil) {
+fn get_field(
+  fields: List(#(String, String)),
+  key: String,
+) -> Result(String, Nil) {
   case fields {
     [] -> Error(Nil)
     [#(k, v), ..] if k == key -> Ok(v)

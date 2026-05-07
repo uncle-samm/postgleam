@@ -12,7 +12,6 @@
 ///   decode.success(User(id:, name:, email:))
 /// }
 /// ```
-
 import gleam/int
 import gleam/option.{type Option, None, Some}
 import postgleam/error.{type Error}
@@ -76,7 +75,9 @@ pub fn int(val: Option(Value)) -> Result(Int, Error) {
   case val {
     Some(value.Integer(n)) -> Ok(n)
     Some(other) ->
-      Error(error.DecodeError("Expected Integer, got " <> value_type_name(other)))
+      Error(error.DecodeError(
+        "Expected Integer, got " <> value_type_name(other),
+      ))
     None -> Error(error.DecodeError("Expected Integer, got NULL"))
   }
 }
@@ -238,9 +239,7 @@ pub fn timetz(val: Option(Value)) -> Result(#(Int, Int), Error) {
   case val {
     Some(value.TimeTz(us, tz)) -> Ok(#(us, tz))
     Some(other) ->
-      Error(error.DecodeError(
-        "Expected TimeTz, got " <> value_type_name(other),
-      ))
+      Error(error.DecodeError("Expected TimeTz, got " <> value_type_name(other)))
     None -> Error(error.DecodeError("Expected TimeTz, got NULL"))
   }
 }
@@ -310,9 +309,7 @@ pub fn line(val: Option(Value)) -> Result(#(Float, Float, Float), Error) {
 }
 
 /// Decode a line segment as #(x1, y1, x2, y2).
-pub fn lseg(
-  val: Option(Value),
-) -> Result(#(Float, Float, Float, Float), Error) {
+pub fn lseg(val: Option(Value)) -> Result(#(Float, Float, Float, Float), Error) {
   case val {
     Some(value.Lseg(x1, y1, x2, y2)) -> Ok(#(x1, y1, x2, y2))
     Some(other) ->
@@ -322,9 +319,7 @@ pub fn lseg(
 }
 
 /// Decode a box as #(x1, y1, x2, y2) (upper-right, lower-left).
-pub fn box(
-  val: Option(Value),
-) -> Result(#(Float, Float, Float, Float), Error) {
+pub fn box(val: Option(Value)) -> Result(#(Float, Float, Float, Float), Error) {
   case val {
     Some(value.Box(x1, y1, x2, y2)) -> Ok(#(x1, y1, x2, y2))
     Some(other) ->
@@ -338,17 +333,13 @@ pub fn circle(val: Option(Value)) -> Result(#(Float, Float, Float), Error) {
   case val {
     Some(value.Circle(x, y, r)) -> Ok(#(x, y, r))
     Some(other) ->
-      Error(error.DecodeError(
-        "Expected Circle, got " <> value_type_name(other),
-      ))
+      Error(error.DecodeError("Expected Circle, got " <> value_type_name(other)))
     None -> Error(error.DecodeError("Expected Circle, got NULL"))
   }
 }
 
 /// Decode a path as #(closed, points).
-pub fn path(
-  val: Option(Value),
-) -> Result(#(Bool, List(#(Float, Float))), Error) {
+pub fn path(val: Option(Value)) -> Result(#(Bool, List(#(Float, Float))), Error) {
   case val {
     Some(value.Path(closed, pts)) -> Ok(#(closed, pts))
     Some(other) ->
@@ -358,9 +349,7 @@ pub fn path(
 }
 
 /// Decode a polygon as a list of vertices.
-pub fn polygon(
-  val: Option(Value),
-) -> Result(List(#(Float, Float)), Error) {
+pub fn polygon(val: Option(Value)) -> Result(List(#(Float, Float)), Error) {
   case val {
     Some(value.Polygon(pts)) -> Ok(pts)
     Some(other) ->

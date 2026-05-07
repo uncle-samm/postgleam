@@ -1,8 +1,9 @@
 /// PostgreSQL int4 (integer) codec - binary format
 /// Wire: 4 bytes signed big-endian
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Integer}
 
 /// OID for int4
@@ -33,7 +34,8 @@ pub fn encode(val: Value) -> Result(BitArray, String) {
     Integer(n) ->
       case n >= -2_147_483_648 && n <= 2_147_483_647 {
         True -> Ok(<<n:32-big>>)
-        False -> Error("int4 codec: value out of range (-2147483648..2147483647)")
+        False ->
+          Error("int4 codec: value out of range (-2147483648..2147483647)")
       }
     _ -> Error("int4 codec: expected Integer value")
   }

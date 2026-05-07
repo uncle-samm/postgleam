@@ -25,8 +25,7 @@ pub fn query_select_int_test() {
   let cfg = test_config()
   let assert Ok(conn) = postgleam.connect(cfg)
 
-  let assert Ok(result) =
-    postgleam.query(conn, "SELECT 42::int4 AS num", [])
+  let assert Ok(result) = postgleam.query(conn, "SELECT 42::int4 AS num", [])
 
   should.equal(result.tag, "SELECT 1")
   should.equal(result.rows, [[Some(value.Integer(42))]])
@@ -38,11 +37,10 @@ pub fn query_with_param_test() {
   let assert Ok(conn) = postgleam.connect(cfg)
 
   let assert Ok(result) =
-    postgleam.query(
-      conn,
-      "SELECT $1::int4 + $2::int4 AS sum",
-      [Some(value.Integer(10)), Some(value.Integer(32))],
-    )
+    postgleam.query(conn, "SELECT $1::int4 + $2::int4 AS sum", [
+      Some(value.Integer(10)),
+      Some(value.Integer(32)),
+    ])
 
   should.equal(result.rows, [[Some(value.Integer(42))]])
   postgleam.disconnect(conn)
@@ -70,8 +68,14 @@ pub fn query_multiple_types_test() {
       [],
     )
 
-  let assert [[Some(value.Integer(1)), Some(value.Text("hello")), Some(value.Boolean(True)), Some(value.Float(f))]] =
-    result.rows
+  let assert [
+    [
+      Some(value.Integer(1)),
+      Some(value.Text("hello")),
+      Some(value.Boolean(True)),
+      Some(value.Float(f)),
+    ],
+  ] = result.rows
   should.be_true(f >. 3.13 && f <. 3.15)
   postgleam.disconnect(conn)
 }
@@ -84,8 +88,7 @@ pub fn query_error_test() {
     postgleam.query(conn, "SELECT * FROM nonexistent_xyz", [])
 
   // Connection should still be usable after error
-  let assert Ok(result) =
-    postgleam.query(conn, "SELECT 1::int4 AS num", [])
+  let assert Ok(result) = postgleam.query(conn, "SELECT 1::int4 AS num", [])
 
   should.equal(result.rows, [[Some(value.Integer(1))]])
   postgleam.disconnect(conn)
@@ -95,8 +98,7 @@ pub fn simple_query_test() {
   let cfg = test_config()
   let assert Ok(conn) = postgleam.connect(cfg)
 
-  let assert Ok(results) =
-    postgleam.simple_query(conn, "SELECT 1 AS num")
+  let assert Ok(results) = postgleam.simple_query(conn, "SELECT 1 AS num")
 
   let assert [result] = results
   should.equal(result.tag, "SELECT 1")
@@ -155,17 +157,14 @@ pub fn transaction_commit_test() {
   let assert Ok(42) =
     postgleam.transaction(conn, fn(conn) {
       let assert Ok(_) =
-        postgleam.query(
-          conn,
-          "INSERT INTO _tx_test VALUES ($1::int4)",
-          [Some(value.Integer(1))],
-        )
+        postgleam.query(conn, "INSERT INTO _tx_test VALUES ($1::int4)", [
+          Some(value.Integer(1)),
+        ])
       Ok(42)
     })
 
   // Verify the insert persisted
-  let assert Ok(result) =
-    postgleam.query(conn, "SELECT id FROM _tx_test", [])
+  let assert Ok(result) = postgleam.query(conn, "SELECT id FROM _tx_test", [])
 
   should.equal(result.rows, [[Some(value.Integer(1))]])
   postgleam.disconnect(conn)
@@ -183,11 +182,9 @@ pub fn transaction_rollback_test() {
   let assert Error(_) =
     postgleam.transaction(conn, fn(conn) {
       let assert Ok(_) =
-        postgleam.query(
-          conn,
-          "INSERT INTO _tx_rb_test VALUES ($1::int4)",
-          [Some(value.Integer(99))],
-        )
+        postgleam.query(conn, "INSERT INTO _tx_rb_test VALUES ($1::int4)", [
+          Some(value.Integer(99)),
+        ])
       Error(postgleam.query_error("deliberate rollback"))
     })
 
@@ -232,11 +229,20 @@ pub fn param_constructors_test() {
     postgleam.query(
       conn,
       "SELECT $1::int4 + $2::int4 AS sum, $3::text AS name, $4::bool AS flag",
-      [postgleam.int(10), postgleam.int(32), postgleam.text("hello"), postgleam.bool(True)],
+      [
+        postgleam.int(10),
+        postgleam.int(32),
+        postgleam.text("hello"),
+        postgleam.bool(True),
+      ],
     )
 
   should.equal(result.rows, [
-    [Some(value.Integer(42)), Some(value.Text("hello")), Some(value.Boolean(True))],
+    [
+      Some(value.Integer(42)),
+      Some(value.Text("hello")),
+      Some(value.Boolean(True)),
+    ],
   ])
   postgleam.disconnect(conn)
 }
@@ -257,11 +263,9 @@ pub fn param_nullable_some_test() {
   let assert Ok(conn) = postgleam.connect(cfg)
 
   let assert Ok(result) =
-    postgleam.query(
-      conn,
-      "SELECT $1::text AS val",
-      [postgleam.nullable(Some("hello"), postgleam.text)],
-    )
+    postgleam.query(conn, "SELECT $1::text AS val", [
+      postgleam.nullable(Some("hello"), postgleam.text),
+    ])
 
   should.equal(result.rows, [[Some(value.Text("hello"))]])
   postgleam.disconnect(conn)
@@ -272,11 +276,9 @@ pub fn param_nullable_none_test() {
   let assert Ok(conn) = postgleam.connect(cfg)
 
   let assert Ok(result) =
-    postgleam.query(
-      conn,
-      "SELECT $1::text AS val",
-      [postgleam.nullable(None, postgleam.text)],
-    )
+    postgleam.query(conn, "SELECT $1::text AS val", [
+      postgleam.nullable(None, postgleam.text),
+    ])
 
   should.equal(result.rows, [[None]])
   postgleam.disconnect(conn)
@@ -399,8 +401,7 @@ pub fn query_one_test() {
     decode.success(n)
   }
 
-  let assert Ok(val) =
-    postgleam.query_one(conn, "SELECT 42::int4", [], decoder)
+  let assert Ok(val) = postgleam.query_one(conn, "SELECT 42::int4", [], decoder)
 
   should.equal(val, 42)
   postgleam.disconnect(conn)
@@ -519,11 +520,10 @@ pub fn uuid_string_param_in_table_test() {
   let uuid_str = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
 
   let assert Ok(_) =
-    postgleam.query(
-      conn,
-      "INSERT INTO _uuid_test (id, name) VALUES ($1, $2)",
-      [postgleam.uuid_string(uuid_str), postgleam.text("alice")],
-    )
+    postgleam.query(conn, "INSERT INTO _uuid_test (id, name) VALUES ($1, $2)", [
+      postgleam.uuid_string(uuid_str),
+      postgleam.text("alice"),
+    ])
 
   let decoder = {
     use id <- decode.element(0, decode.uuid_string)
@@ -624,11 +624,7 @@ pub fn query_batch_select_test() {
   ]
 
   let assert Ok(results) =
-    postgleam.query_batch(
-      conn,
-      "SELECT $1::int4 * 2 AS doubled",
-      param_sets,
-    )
+    postgleam.query_batch(conn, "SELECT $1::int4 * 2 AS doubled", param_sets)
 
   should.equal(list.length(results), 3)
   let assert [r1, r2, r3] = results
@@ -642,8 +638,7 @@ pub fn query_batch_empty_test() {
   let cfg = test_config()
   let assert Ok(conn) = postgleam.connect(cfg)
 
-  let assert Ok(results) =
-    postgleam.query_batch(conn, "SELECT 1::int4", [])
+  let assert Ok(results) = postgleam.query_batch(conn, "SELECT 1::int4", [])
 
   should.equal(results, [])
   postgleam.disconnect(conn)
@@ -804,8 +799,7 @@ pub fn pool_health_check_test() {
   let pool = started.data
 
   // Query should work
-  let assert Ok(result) =
-    postgleam_pool.query(pool, "SELECT 1::int4", [], 5000)
+  let assert Ok(result) = postgleam_pool.query(pool, "SELECT 1::int4", [], 5000)
   should.equal(result.rows, [[Some(value.Integer(1))]])
 
   // Wait for health check to run

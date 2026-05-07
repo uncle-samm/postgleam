@@ -1,8 +1,9 @@
 /// PostgreSQL time codec - binary format
 /// Wire: 8 bytes int64 = microseconds since midnight
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Time}
 
 pub const oid = 1083
@@ -18,7 +19,13 @@ pub fn matcher() -> CodecMatcher {
 }
 
 fn build(type_oid: Int) -> Codec {
-  Codec(type_name: "time", oid: type_oid, format: Binary, encode: encode, decode: decode)
+  Codec(
+    type_name: "time",
+    oid: type_oid,
+    format: Binary,
+    encode: encode,
+    decode: decode,
+  )
 }
 
 pub fn encode(val: Value) -> Result(BitArray, String) {

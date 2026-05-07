@@ -1,9 +1,10 @@
 /// PostgreSQL path codec - binary format
 /// Wire: 1 byte (1=closed, 0=open) + 4 bytes npts (int32) + npts × 16 bytes (each point is 2×float64)
-
 import gleam/list
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Path}
 
 pub const oid = 602
@@ -19,7 +20,13 @@ pub fn matcher() -> CodecMatcher {
 }
 
 fn build(type_oid: Int) -> Codec {
-  Codec(type_name: "path", oid: type_oid, format: Binary, encode: encode, decode: decode)
+  Codec(
+    type_name: "path",
+    oid: type_oid,
+    format: Binary,
+    encode: encode,
+    decode: decode,
+  )
 }
 
 pub fn encode(val: Value) -> Result(BitArray, String) {

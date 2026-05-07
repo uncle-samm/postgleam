@@ -1,5 +1,4 @@
 /// Row decoder combinator benchmarks — measures overhead of the use-based decoder chain.
-
 import bench/runner.{type BenchmarkResult}
 import gleam/list
 import gleam/option.{type Option, None, Some}

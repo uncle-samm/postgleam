@@ -52,7 +52,8 @@ pub fn inet_decode_ipv4_test() {
 pub fn inet_roundtrip_ipv4_test() {
   let addr = <<172, 16, 0, 1>>
   let assert Ok(encoded) = inet.encode(value.Inet(2, addr, 16))
-  let assert Ok(value.Inet(family, decoded_addr, netmask)) = inet.decode(encoded)
+  let assert Ok(value.Inet(family, decoded_addr, netmask)) =
+    inet.decode(encoded)
   should.equal(family, 2)
   should.equal(decoded_addr, addr)
   should.equal(netmask, 16)
@@ -62,7 +63,8 @@ pub fn inet_ipv6_test() {
   // ::1 (loopback)
   let addr = <<0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1>>
   let assert Ok(encoded) = inet.encode(value.Inet(3, addr, 128))
-  let assert Ok(value.Inet(family, decoded_addr, netmask)) = inet.decode(encoded)
+  let assert Ok(value.Inet(family, decoded_addr, netmask)) =
+    inet.decode(encoded)
   should.equal(family, 3)
   should.equal(decoded_addr, addr)
   should.equal(netmask, 128)

@@ -29,8 +29,7 @@ pub fn numeric_encode_pos_infinity_test() {
 
 pub fn numeric_decode_zero_test() {
   // 0 digits, weight 0, sign positive, scale 0
-  let assert Ok(value.Numeric(s)) =
-    numeric.decode(<<0:16, 0:16, 0:16, 0:16>>)
+  let assert Ok(value.Numeric(s)) = numeric.decode(<<0:16, 0:16, 0:16, 0:16>>)
   should.equal(s, "0")
 }
 

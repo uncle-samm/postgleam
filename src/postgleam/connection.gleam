@@ -1,5 +1,4 @@
 /// Core PostgreSQL connection - TCP connect, authentication, protocol state machine
-
 import gleam/bit_array
 import gleam/dict.{type Dict}
 import gleam/list
@@ -13,12 +12,12 @@ import postgleam/config.{type Config, SslDisabled, SslUnverified, SslVerified}
 import postgleam/error.{type Error}
 import postgleam/internal/transport.{type Transport}
 import postgleam/message.{
-  type BackendMessage, type RowField, type TransactionStatus,
-  AuthCleartext, AuthMd5, AuthOk, AuthSasl, AuthSaslContinue, AuthSaslFinal,
-  AuthenticationMsg, BackendKeyData, BindComplete, CloseComplete,
-  CommandComplete, DataRow, Decoded, DecodeFailed, ErrorResponse,
-  Incomplete, NoData, NoticeResponse, ParameterDescription, ParameterStatus,
-  ParseComplete, PortalSuspended, ReadyForQuery, RowDescription,
+  type BackendMessage, type RowField, type TransactionStatus, AuthCleartext,
+  AuthMd5, AuthOk, AuthSasl, AuthSaslContinue, AuthSaslFinal, AuthenticationMsg,
+  BackendKeyData, BindComplete, CloseComplete, CommandComplete, DataRow,
+  DecodeFailed, Decoded, ErrorResponse, Incomplete, NoData, NoticeResponse,
+  ParameterDescription, ParameterStatus, ParseComplete, PortalSuspended,
+  ReadyForQuery, RowDescription,
 }
 import postgleam/value.{type Value}
 
@@ -50,9 +49,19 @@ pub fn connect(config: Config) -> Result(ConnectionState, Error) {
   use conn_transport <- result.try(case config.ssl {
     SslDisabled -> Ok(transport.Tcp(tcp_socket))
     SslVerified ->
-      transport.upgrade_to_ssl(tcp_socket, config.host, config.connect_timeout, True)
+      transport.upgrade_to_ssl(
+        tcp_socket,
+        config.host,
+        config.connect_timeout,
+        True,
+      )
     SslUnverified ->
-      transport.upgrade_to_ssl(tcp_socket, config.host, config.connect_timeout, False)
+      transport.upgrade_to_ssl(
+        tcp_socket,
+        config.host,
+        config.connect_timeout,
+        False,
+      )
   })
 
   let state =
@@ -71,7 +80,10 @@ pub fn connect(config: Config) -> Result(ConnectionState, Error) {
     #("database", config.database),
   ]
   let startup =
-    message.StartupMessage(params: list.append(base_params, config.extra_parameters))
+    message.StartupMessage(params: list.append(
+      base_params,
+      config.extra_parameters,
+    ))
   use state <- result.try(send_message(state, startup))
 
   // Process authentication and startup
@@ -115,8 +127,7 @@ fn receive_message_loop(
 ) -> Result(#(BackendMessage, ConnectionState), Error) {
   // Try to decode from existing buffer first
   case message.decode_backend(state.buffer) {
-    Decoded(msg, rest) ->
-      Ok(#(msg, ConnectionState(..state, buffer: rest)))
+    Decoded(msg, rest) -> Ok(#(msg, ConnectionState(..state, buffer: rest)))
     DecodeFailed(reason) ->
       Error(error.ProtocolError("Decode failed: " <> reason))
     Incomplete -> {
@@ -174,7 +185,10 @@ fn simple_query_loop(
     }
     DataRow(values) -> {
       let row = decode_text_row(values)
-      simple_query_loop(state, sql, timeout, results, current_columns, [row, ..current_rows])
+      simple_query_loop(state, sql, timeout, results, current_columns, [
+        row,
+        ..current_rows
+      ])
     }
     CommandComplete(tag) -> {
       let cols = case current_columns {
@@ -190,19 +204,44 @@ fn simple_query_loop(
       simple_query_loop(state, sql, timeout, [result, ..results], None, [])
     }
     message.EmptyQueryResponse -> {
-      simple_query_loop(state, sql, timeout, results, current_columns, current_rows)
+      simple_query_loop(
+        state,
+        sql,
+        timeout,
+        results,
+        current_columns,
+        current_rows,
+      )
     }
     ErrorResponse(fields) -> {
       let pg_fields = error.parse_error_fields(fields)
       // Drain to ReadyForQuery so the connection is clean for the next query
       let _ = drain_to_ready(state, timeout)
-      Error(error.PgError(fields: pg_fields, connection_id: state.connection_id, query: Some(sql)))
+      Error(error.PgError(
+        fields: pg_fields,
+        connection_id: state.connection_id,
+        query: Some(sql),
+      ))
     }
     NoticeResponse(_) -> {
-      simple_query_loop(state, sql, timeout, results, current_columns, current_rows)
+      simple_query_loop(
+        state,
+        sql,
+        timeout,
+        results,
+        current_columns,
+        current_rows,
+      )
     }
     message.NotificationResponse(_, _, _) -> {
-      simple_query_loop(state, sql, timeout, results, current_columns, current_rows)
+      simple_query_loop(
+        state,
+        sql,
+        timeout,
+        results,
+        current_columns,
+        current_rows,
+      )
     }
     _ -> {
       Error(error.ProtocolError("Unexpected message during simple query"))
@@ -256,13 +295,17 @@ pub fn prepare(
   // Receive ParseComplete
   use state <- result.try(recv_parse_complete(state, sql, timeout))
   // Receive ParameterDescription
-  use #(param_oids_result, state) <- result.try(
-    recv_parameter_description(state, sql, timeout),
-  )
+  use #(param_oids_result, state) <- result.try(recv_parameter_description(
+    state,
+    sql,
+    timeout,
+  ))
   // Receive RowDescription or NoData
-  use #(result_fields, state) <- result.try(
-    recv_row_description_or_nodata(state, sql, timeout),
-  )
+  use #(result_fields, state) <- result.try(recv_row_description_or_nodata(
+    state,
+    sql,
+    timeout,
+  ))
   // Receive ReadyForQuery
   use state <- result.try(recv_ready_for_query(state, sql, timeout))
 
@@ -286,9 +329,11 @@ pub fn execute_prepared(
   timeout: Int,
 ) -> Result(#(ExtendedQueryResult, ConnectionState), Error) {
   // Encode parameters
-  use encoded_params <- result.try(
-    encode_params_binary(params, prepared.param_oids, registry),
-  )
+  use encoded_params <- result.try(encode_params_binary(
+    params,
+    prepared.param_oids,
+    registry,
+  ))
 
   // Build format lists
   let param_formats =
@@ -299,18 +344,19 @@ pub fn execute_prepared(
   // Send Bind + Execute + Sync
   use state <- result.try(send_message(
     state,
-    message.Bind("", prepared.name, param_formats, encoded_params, result_formats),
+    message.Bind(
+      "",
+      prepared.name,
+      param_formats,
+      encoded_params,
+      result_formats,
+    ),
   ))
-  use state <- result.try(send_message(
-    state,
-    message.Execute("", 0),
-  ))
+  use state <- result.try(send_message(state, message.Execute("", 0)))
   use state <- result.try(send_message(state, message.Sync))
 
   // Receive BindComplete
-  use state <- result.try(
-    recv_bind_complete(state, prepared.statement, timeout),
-  )
+  use state <- result.try(recv_bind_complete(state, prepared.statement, timeout))
   // Resolve decoders once for all rows
   let decoders = resolve_row_decoders(prepared.result_fields, registry)
   // Receive DataRows + CommandComplete
@@ -318,9 +364,11 @@ pub fn execute_prepared(
     recv_execute_rows(state, prepared, decoders, timeout, []),
   )
   // Receive ReadyForQuery
-  use state <- result.try(
-    recv_ready_for_query(state, prepared.statement, timeout),
-  )
+  use state <- result.try(recv_ready_for_query(
+    state,
+    prepared.statement,
+    timeout,
+  ))
 
   Ok(#(
     ExtendedQueryResult(
@@ -362,18 +410,15 @@ pub fn execute_pipeline(
   // Read all results
   let decoders = resolve_row_decoders(prepared.result_fields, registry)
   let count = list.length(param_sets)
-  use #(results, state) <- result.try(recv_pipeline_results(
-    state,
-    prepared,
-    decoders,
-    timeout,
-    count,
-    [],
-  ))
-  // Read final ReadyForQuery
-  use state <- result.try(
-    recv_ready_for_query(state, prepared.statement, timeout),
+  use #(results, state) <- result.try(
+    recv_pipeline_results(state, prepared, decoders, timeout, count, []),
   )
+  // Read final ReadyForQuery
+  use state <- result.try(recv_ready_for_query(
+    state,
+    prepared.statement,
+    timeout,
+  ))
   Ok(#(results, state))
 }
 
@@ -388,9 +433,11 @@ fn send_pipeline_messages(
   case param_sets {
     [] -> Ok(state)
     [params, ..rest] -> {
-      use encoded_params <- result.try(
-        encode_params_binary(params, prepared.param_oids, registry),
-      )
+      use encoded_params <- result.try(encode_params_binary(
+        params,
+        prepared.param_oids,
+        registry,
+      ))
       use state <- result.try(send_message(
         state,
         message.Bind(
@@ -426,9 +473,11 @@ fn recv_pipeline_results(
     0 -> Ok(#(list_reverse(acc), state))
     _ -> {
       // Each result: BindComplete + DataRow* + CommandComplete
-      use state <- result.try(
-        recv_bind_complete(state, prepared.statement, timeout),
-      )
+      use state <- result.try(recv_bind_complete(
+        state,
+        prepared.statement,
+        timeout,
+      ))
       use #(tag, rows, state) <- result.try(
         recv_execute_rows(state, prepared, decoders, timeout, []),
       )
@@ -438,14 +487,10 @@ fn recv_pipeline_results(
           columns: prepared.result_fields,
           rows: list_reverse(rows),
         )
-      recv_pipeline_results(
-        state,
-        prepared,
-        decoders,
-        timeout,
-        remaining - 1,
-        [result, ..acc],
-      )
+      recv_pipeline_results(state, prepared, decoders, timeout, remaining - 1, [
+        result,
+        ..acc
+      ])
     }
   }
 }
@@ -479,10 +524,7 @@ pub fn extended_query_unnamed(
   timeout: Int,
 ) -> Result(#(ExtendedQueryResult, ConnectionState), Error) {
   // Phase 1: Parse + Describe + Flush (no ReadyForQuery generated)
-  use state <- result.try(send_message(
-    state,
-    message.Parse("", sql, []),
-  ))
+  use state <- result.try(send_message(state, message.Parse("", sql, [])))
   use state <- result.try(send_message(
     state,
     message.Describe(message.DescribeStatement, ""),
@@ -490,22 +532,27 @@ pub fn extended_query_unnamed(
   use state <- result.try(send_message(state, message.Flush))
 
   use state <- result.try(recv_parse_complete(state, sql, timeout))
-  use #(param_oids, state) <- result.try(
-    recv_parameter_description(state, sql, timeout),
-  )
-  use #(result_fields, state) <- result.try(
-    recv_row_description_or_nodata(state, sql, timeout),
-  )
+  use #(param_oids, state) <- result.try(recv_parameter_description(
+    state,
+    sql,
+    timeout,
+  ))
+  use #(result_fields, state) <- result.try(recv_row_description_or_nodata(
+    state,
+    sql,
+    timeout,
+  ))
   // No recv_ready_for_query here — Flush doesn't trigger it
 
   // Phase 2: Bind + Execute + Sync (single ReadyForQuery at end)
-  use encoded_params <- result.try(
-    encode_params_binary(params, param_oids, registry),
-  )
+  use encoded_params <- result.try(encode_params_binary(
+    params,
+    param_oids,
+    registry,
+  ))
 
   let param_formats = list.map(param_oids, fn(_) { message.BinaryFormat })
-  let result_formats =
-    list.map(result_fields, fn(_) { message.BinaryFormat })
+  let result_formats = list.map(result_fields, fn(_) { message.BinaryFormat })
 
   let prepared =
     PreparedStatement(
@@ -522,9 +569,7 @@ pub fn extended_query_unnamed(
   use state <- result.try(send_message(state, message.Execute("", 0)))
   use state <- result.try(send_message(state, message.Sync))
 
-  use state <- result.try(
-    recv_bind_complete(state, sql, timeout),
-  )
+  use state <- result.try(recv_bind_complete(state, sql, timeout))
   let decoders = resolve_row_decoders(prepared.result_fields, registry)
   use #(tag, rows, state) <- result.try(
     recv_execute_rows(state, prepared, decoders, timeout, []),
@@ -551,10 +596,7 @@ pub fn extended_query_pipeline_unnamed(
   timeout: Int,
 ) -> Result(#(List(ExtendedQueryResult), ConnectionState), Error) {
   // Phase 1: Parse + Describe + Flush (no ReadyForQuery)
-  use state <- result.try(send_message(
-    state,
-    message.Parse("", sql, []),
-  ))
+  use state <- result.try(send_message(state, message.Parse("", sql, [])))
   use state <- result.try(send_message(
     state,
     message.Describe(message.DescribeStatement, ""),
@@ -562,12 +604,16 @@ pub fn extended_query_pipeline_unnamed(
   use state <- result.try(send_message(state, message.Flush))
 
   use state <- result.try(recv_parse_complete(state, sql, timeout))
-  use #(param_oids, state) <- result.try(
-    recv_parameter_description(state, sql, timeout),
-  )
-  use #(result_fields, state) <- result.try(
-    recv_row_description_or_nodata(state, sql, timeout),
-  )
+  use #(param_oids, state) <- result.try(recv_parameter_description(
+    state,
+    sql,
+    timeout,
+  ))
+  use #(result_fields, state) <- result.try(recv_row_description_or_nodata(
+    state,
+    sql,
+    timeout,
+  ))
   // No recv_ready_for_query — Flush doesn't trigger it
 
   let prepared =
@@ -597,17 +643,14 @@ pub fn extended_query_pipeline_unnamed(
   // Read all results
   let decoders = resolve_row_decoders(prepared.result_fields, registry)
   let count = list.length(param_sets)
-  use #(results, state) <- result.try(recv_pipeline_results(
-    state,
-    prepared,
-    decoders,
-    timeout,
-    count,
-    [],
-  ))
-  use state <- result.try(
-    recv_ready_for_query(state, prepared.statement, timeout),
+  use #(results, state) <- result.try(
+    recv_pipeline_results(state, prepared, decoders, timeout, count, []),
   )
+  use state <- result.try(recv_ready_for_query(
+    state,
+    prepared.statement,
+    timeout,
+  ))
   Ok(#(results, state))
 }
 
@@ -621,10 +664,7 @@ pub fn extended_query(
   timeout: Int,
 ) -> Result(#(ExtendedQueryResult, ConnectionState), Error) {
   // Step 1: Parse + Describe + Sync to get type info
-  use state <- result.try(send_message(
-    state,
-    message.Parse("", sql, []),
-  ))
+  use state <- result.try(send_message(state, message.Parse("", sql, [])))
   use state <- result.try(send_message(
     state,
     message.Describe(message.DescribeStatement, ""),
@@ -632,22 +672,27 @@ pub fn extended_query(
   use state <- result.try(send_message(state, message.Sync))
 
   use state <- result.try(recv_parse_complete(state, sql, timeout))
-  use #(param_oids, state) <- result.try(
-    recv_parameter_description(state, sql, timeout),
-  )
-  use #(result_fields, state) <- result.try(
-    recv_row_description_or_nodata(state, sql, timeout),
-  )
+  use #(param_oids, state) <- result.try(recv_parameter_description(
+    state,
+    sql,
+    timeout,
+  ))
+  use #(result_fields, state) <- result.try(recv_row_description_or_nodata(
+    state,
+    sql,
+    timeout,
+  ))
   use state <- result.try(recv_ready_for_query(state, sql, timeout))
 
   // Step 2: Encode params and Bind + Execute + Close + Sync
-  use encoded_params <- result.try(
-    encode_params_binary(params, param_oids, registry),
-  )
+  use encoded_params <- result.try(encode_params_binary(
+    params,
+    param_oids,
+    registry,
+  ))
 
   let param_formats = list.map(param_oids, fn(_) { message.BinaryFormat })
-  let result_formats =
-    list.map(result_fields, fn(_) { message.BinaryFormat })
+  let result_formats = list.map(result_fields, fn(_) { message.BinaryFormat })
 
   let prepared =
     PreparedStatement(
@@ -668,9 +713,7 @@ pub fn extended_query(
   ))
   use state <- result.try(send_message(state, message.Sync))
 
-  use state <- result.try(
-    recv_bind_complete(state, sql, timeout),
-  )
+  use state <- result.try(recv_bind_complete(state, sql, timeout))
   let decoders = resolve_row_decoders(prepared.result_fields, registry)
   use #(tag, rows, state) <- result.try(
     recv_execute_rows(state, prepared, decoders, timeout, []),
@@ -707,9 +750,11 @@ pub fn bind_and_execute_portal(
   max_rows: Int,
   timeout: Int,
 ) -> Result(#(StreamChunk, ConnectionState), Error) {
-  use encoded_params <- result.try(
-    encode_params_binary(params, prepared.param_oids, registry),
-  )
+  use encoded_params <- result.try(encode_params_binary(
+    params,
+    prepared.param_oids,
+    registry,
+  ))
   let param_formats =
     list.map(prepared.param_oids, fn(_) { message.BinaryFormat })
   let result_formats =
@@ -717,16 +762,17 @@ pub fn bind_and_execute_portal(
 
   use state <- result.try(send_message(
     state,
-    message.Bind("", prepared.name, param_formats, encoded_params, result_formats),
+    message.Bind(
+      "",
+      prepared.name,
+      param_formats,
+      encoded_params,
+      result_formats,
+    ),
   ))
-  use state <- result.try(send_message(
-    state,
-    message.Execute("", max_rows),
-  ))
+  use state <- result.try(send_message(state, message.Execute("", max_rows)))
   use state <- result.try(send_message(state, message.Flush))
-  use state <- result.try(
-    recv_bind_complete(state, prepared.statement, timeout),
-  )
+  use state <- result.try(recv_bind_complete(state, prepared.statement, timeout))
   let decoders = resolve_row_decoders(prepared.result_fields, registry)
   recv_stream_rows(state, prepared, decoders, timeout, [])
 }
@@ -740,10 +786,7 @@ pub fn execute_portal(
   max_rows: Int,
   timeout: Int,
 ) -> Result(#(StreamChunk, ConnectionState), Error) {
-  use state <- result.try(send_message(
-    state,
-    message.Execute("", max_rows),
-  ))
+  use state <- result.try(send_message(state, message.Execute("", max_rows)))
   use state <- result.try(send_message(state, message.Flush))
   let decoders = resolve_row_decoders(prepared.result_fields, registry)
   recv_stream_rows(state, prepared, decoders, timeout, [])
@@ -845,8 +888,7 @@ fn recv_row_description_or_nodata(
         query: Some(sql),
       ))
     }
-    NoticeResponse(_) ->
-      recv_row_description_or_nodata(state, sql, timeout)
+    NoticeResponse(_) -> recv_row_description_or_nodata(state, sql, timeout)
     ParameterStatus(name: name, value: val) -> {
       let state =
         ConnectionState(
@@ -889,9 +931,7 @@ fn recv_bind_complete(
       recv_bind_complete(state, sql, timeout)
     }
     _ ->
-      Error(error.ProtocolError(
-        "Expected BindComplete, got unexpected message",
-      ))
+      Error(error.ProtocolError("Expected BindComplete, got unexpected message"))
   }
 }
 
@@ -1074,12 +1114,10 @@ fn encode_params_loop(
         Ok(codec) ->
           case codec.encode(val) {
             Ok(bytes) ->
-              encode_params_loop(
-                rest_params,
-                rest_oids,
-                reg,
-                [Some(bytes), ..acc],
-              )
+              encode_params_loop(rest_params, rest_oids, reg, [
+                Some(bytes),
+                ..acc
+              ])
             Error(e) -> Error(error.EncodeError(e))
           }
         Error(e) -> Error(error.EncodeError(e))
@@ -1125,8 +1163,10 @@ fn decode_values_with_decoders(
 ) -> List(Option(Value)) {
   case raw_values, decoders {
     [], [] -> []
-    [None, ..rest_vals], [_, ..rest_decoders] ->
-      [None, ..decode_values_with_decoders(rest_vals, rest_decoders)]
+    [None, ..rest_vals], [_, ..rest_decoders] -> [
+      None,
+      ..decode_values_with_decoders(rest_vals, rest_decoders)
+    ]
     [Some(bytes), ..rest_vals], [decoder, ..rest_decoders] -> {
       let decoded = case decoder(bytes) {
         Ok(val) -> Some(val)
@@ -1148,9 +1188,10 @@ fn authenticate_loop(
   case msg {
     AuthenticationMsg(AuthOk) -> startup_loop(state, config)
     AuthenticationMsg(AuthCleartext) -> {
-      use state <- result.try(
-        send_message(state, message.PasswordMessage(config.password)),
-      )
+      use state <- result.try(send_message(
+        state,
+        message.PasswordMessage(config.password),
+      ))
       authenticate_loop(state, config)
     }
     AuthenticationMsg(AuthMd5(salt: salt)) -> {
@@ -1162,12 +1203,10 @@ fn authenticate_loop(
       let #(mechanism, client_first_data) = scram.client_first()
       let assert Ok(client_first_bare) =
         scram.extract_client_first_bare(client_first_data)
-      use state <- result.try(
-        send_message(
-          state,
-          message.SASLInitialResponse(mechanism, client_first_data),
-        ),
-      )
+      use state <- result.try(send_message(
+        state,
+        message.SASLInitialResponse(mechanism, client_first_data),
+      ))
       scram_continue_loop(state, config, client_first_bare)
     }
     ErrorResponse(fields) -> {
@@ -1188,11 +1227,14 @@ fn scram_continue_loop(
   use #(msg, state) <- result.try(receive_message(state, config.timeout))
   case msg {
     AuthenticationMsg(AuthSaslContinue(data: server_first)) -> {
-      case scram.client_final(server_first, client_first_bare, config.password) {
+      case
+        scram.client_final(server_first, client_first_bare, config.password)
+      {
         Ok(#(client_final, scram_state)) -> {
-          use state <- result.try(
-            send_message(state, message.SASLResponse(client_final)),
-          )
+          use state <- result.try(send_message(
+            state,
+            message.SASLResponse(client_final),
+          ))
           scram_final_loop(state, config, scram_state)
         }
         Error(e) -> Error(error.AuthenticationError("SCRAM error: " <> e))
@@ -1227,9 +1269,7 @@ fn scram_final_loop(
       Error(error.AuthenticationError(pg_fields.message))
     }
     _ ->
-      Error(error.ProtocolError(
-        "Expected SASL final, got unexpected message",
-      ))
+      Error(error.ProtocolError("Expected SASL final, got unexpected message"))
   }
 }
 

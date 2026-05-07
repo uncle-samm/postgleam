@@ -1,9 +1,10 @@
 /// PostgreSQL text/varchar/char/bpchar/citext/unknown/enum codec - binary format
 /// Wire: variable length raw bytes (UTF-8 string)
-
 import gleam/bit_array
 import gleam/option.{Some}
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Text}
 
 /// OIDs for text types

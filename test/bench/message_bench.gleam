@@ -1,5 +1,4 @@
 /// Wire protocol message encode/decode benchmarks.
-
 import bench/runner.{type BenchmarkResult}
 import gleam/list
 import gleam/option.{Some}
@@ -40,13 +39,9 @@ fn bench_encode_parse() -> bench.BenchResults {
 
 fn bench_encode_bind() -> bench.BenchResults {
   let msg =
-    message.Bind(
-      "",
-      "",
-      [message.BinaryFormat],
-      [Some(<<0, 0, 0, 42>>)],
-      [message.BinaryFormat],
-    )
+    message.Bind("", "", [message.BinaryFormat], [Some(<<0, 0, 0, 42>>)], [
+      message.BinaryFormat,
+    ])
   bench.run(
     [bench.Input("bind_1param", msg)],
     [bench.Function("encode_frontend", fn(m) { message.encode_frontend(m) })],
@@ -127,11 +122,8 @@ fn bench_extract_row_values_1col() -> bench.BenchResults {
 
 fn bench_extract_row_values_5col() -> bench.BenchResults {
   let payload = <<
-    4:32-big, 0, 0, 0, 1,
-    4:32-big, 0, 0, 0, 2,
-    4:32-big, 0, 0, 0, 3,
-    4:32-big, 0, 0, 0, 4,
-    4:32-big, 0, 0, 0, 5,
+    4:32-big, 0, 0, 0, 1, 4:32-big, 0, 0, 0, 2, 4:32-big, 0, 0, 0, 3, 4:32-big,
+    0, 0, 0, 4, 4:32-big, 0, 0, 0, 5,
   >>
   bench.run(
     [bench.Input("5_col", payload)],
@@ -147,16 +139,9 @@ fn bench_extract_row_values_5col() -> bench.BenchResults {
 fn bench_extract_row_values_10col() -> bench.BenchResults {
   // 10 columns with NULL interspersed (NULL = 0xFFFFFFFF = -1 as int32)
   let payload = <<
-    4:32-big, 0, 0, 0, 1,
-    4:32-big, 0, 0, 0, 2,
-    255, 255, 255, 255,
-    4:32-big, 0, 0, 0, 4,
-    4:32-big, 0, 0, 0, 5,
-    255, 255, 255, 255,
-    4:32-big, 0, 0, 0, 7,
-    4:32-big, 0, 0, 0, 8,
-    4:32-big, 0, 0, 0, 9,
-    4:32-big, 0, 0, 0, 10,
+    4:32-big, 0, 0, 0, 1, 4:32-big, 0, 0, 0, 2, 255, 255, 255, 255, 4:32-big, 0,
+    0, 0, 4, 4:32-big, 0, 0, 0, 5, 255, 255, 255, 255, 4:32-big, 0, 0, 0, 7,
+    4:32-big, 0, 0, 0, 8, 4:32-big, 0, 0, 0, 9, 4:32-big, 0, 0, 0, 10,
   >>
   bench.run(
     [bench.Input("10_col_mixed", payload)],

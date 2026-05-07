@@ -1,8 +1,9 @@
 /// PostgreSQL interval codec - binary format
 /// Wire: 8 bytes int64 (microseconds) + 4 bytes int32 (days) + 4 bytes int32 (months)
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Interval}
 
 pub const oid = 1186
@@ -18,7 +19,13 @@ pub fn matcher() -> CodecMatcher {
 }
 
 fn build(type_oid: Int) -> Codec {
-  Codec(type_name: "interval", oid: type_oid, format: Binary, encode: encode, decode: decode)
+  Codec(
+    type_name: "interval",
+    oid: type_oid,
+    format: Binary,
+    encode: encode,
+    decode: decode,
+  )
 }
 
 pub fn encode(val: Value) -> Result(BitArray, String) {

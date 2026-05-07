@@ -3,6 +3,7 @@
          encode_float32/1, decode_float32/1, encode_numeric/1,
          int_shr/2, int_shl/2, int_band/2, int_bor/2, int_to_hex/1, hex_to_int/1,
          ssl_upgrade/4, ssl_send/2, ssl_recv/2, ssl_close/1,
+         base64_decode/1,
          monotonic_time_ms/0]).
 
 crypto_exor(A, B) ->
@@ -106,6 +107,13 @@ hex_to_int(S) ->
         _:_ -> {error, nil}
     end.
 
+base64_decode(Data) ->
+    try
+        {ok, base64:decode(Data)}
+    catch
+        _:_ -> {error, nil}
+    end.
+
 %% SSL/TLS support — mirrors Postgrex's {mod, sock} pattern
 
 %% Upgrade a TCP socket to SSL, matching Postgrex's ssl_connect pattern.
@@ -155,4 +163,3 @@ ssl_close(SslSock) ->
 %% Monotonic time in milliseconds (for pool queue timeout tracking)
 monotonic_time_ms() ->
     erlang:monotonic_time(millisecond).
-

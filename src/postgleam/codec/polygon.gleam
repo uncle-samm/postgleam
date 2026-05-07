@@ -1,9 +1,10 @@
 /// PostgreSQL polygon codec - binary format
 /// Wire: 4 bytes npts (int32) + npts × 16 bytes (each vertex is 2×float64)
-
 import gleam/list
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Polygon}
 
 pub const oid = 604

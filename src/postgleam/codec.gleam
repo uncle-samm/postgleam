@@ -1,6 +1,5 @@
 /// Codec framework for encoding/decoding PostgreSQL binary wire format values.
 /// Each codec handles one or more PostgreSQL types identified by their OID.
-
 import gleam/option.{type Option}
 import postgleam/value.{type Value}
 

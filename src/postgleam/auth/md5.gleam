@@ -1,11 +1,13 @@
 /// MD5 password authentication
 /// PostgreSQL MD5 auth: "md5" ++ md5(md5(password ++ username) ++ salt)
-
 import gleam/bit_array
 
-
 /// Generate the MD5 password hash for PostgreSQL authentication
-pub fn hash_password(password: String, username: String, salt: BitArray) -> String {
+pub fn hash_password(
+  password: String,
+  username: String,
+  salt: BitArray,
+) -> String {
   let pass_user = bit_array.from_string(password <> username)
   let inner_hash = md5_hex(pass_user)
   let outer_input = <<bit_array.from_string(inner_hash):bits, salt:bits>>

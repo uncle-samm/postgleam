@@ -1,8 +1,9 @@
 /// PostgreSQL date codec - binary format
 /// Wire: 4 bytes int32 = days since 2000-01-01
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Date}
 
 pub const oid = 1082
@@ -18,7 +19,13 @@ pub fn matcher() -> CodecMatcher {
 }
 
 fn build(type_oid: Int) -> Codec {
-  Codec(type_name: "date", oid: type_oid, format: Binary, encode: encode, decode: decode)
+  Codec(
+    type_name: "date",
+    oid: type_oid,
+    format: Binary,
+    encode: encode,
+    decode: decode,
+  )
 }
 
 pub fn encode(val: Value) -> Result(BitArray, String) {

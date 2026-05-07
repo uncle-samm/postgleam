@@ -1,5 +1,4 @@
 /// Default codec matchers - ordered list of all built-in type codecs
-
 import postgleam/codec.{type CodecMatcher}
 import postgleam/codec/array
 import postgleam/codec/bit_string

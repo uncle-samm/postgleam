@@ -1,9 +1,10 @@
 /// PostgreSQL inet/cidr codec - binary format
 /// Wire: family(1) + netmask(1) + is_cidr(1) + addr_len(1) + address(4 or 16)
-
 import gleam/bit_array
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Inet}
 
 pub const inet_oid = 869
@@ -21,7 +22,13 @@ pub fn matcher() -> CodecMatcher {
 }
 
 fn build(type_oid: Int) -> Codec {
-  Codec(type_name: "inet", oid: type_oid, format: Binary, encode: encode, decode: decode)
+  Codec(
+    type_name: "inet",
+    oid: type_oid,
+    format: Binary,
+    encode: encode,
+    decode: decode,
+  )
 }
 
 pub fn encode(val: Value) -> Result(BitArray, String) {

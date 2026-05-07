@@ -1,6 +1,5 @@
 /// Streaming query results using portal suspension.
 /// Fetches rows in chunks using Execute with max_rows.
-
 import gleam/option.{type Option}
 import postgleam/codec/registry.{type Registry}
 import postgleam/connection.{
@@ -57,9 +56,13 @@ fn collect_chunks(
   case chunk {
     StreamMore(rows) -> {
       let new_acc = append_rows(acc, rows)
-      use #(next_chunk, state) <- ok(
-        connection.execute_portal(state, prepared, registry, max_rows, timeout),
-      )
+      use #(next_chunk, state) <- ok(connection.execute_portal(
+        state,
+        prepared,
+        registry,
+        max_rows,
+        timeout,
+      ))
       collect_chunks(
         state,
         prepared,

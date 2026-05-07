@@ -1,8 +1,9 @@
 /// PostgreSQL box codec - binary format
 /// Wire: 32 bytes = 4×float64 (upper-right x1,y1 then bottom-left x2,y2)
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Box}
 
 pub const oid = 603
@@ -18,7 +19,13 @@ pub fn matcher() -> CodecMatcher {
 }
 
 fn build(type_oid: Int) -> Codec {
-  Codec(type_name: "box", oid: type_oid, format: Binary, encode: encode, decode: decode)
+  Codec(
+    type_name: "box",
+    oid: type_oid,
+    format: Binary,
+    encode: encode,
+    decode: decode,
+  )
 }
 
 pub fn encode(val: Value) -> Result(BitArray, String) {

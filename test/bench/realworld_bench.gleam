@@ -6,7 +6,6 @@
 ///   2. real     — 100 users × 20 articles × 20 comments, per-user transactions + JOIN queries
 ///   3. many     — Insert N users, query all 1000 times (read-heavy)
 ///   4. large    — Insert 1000 users with large text columns, query all
-
 import bench/runner
 import gleam/dynamic/decode as dyn_decode
 import gleam/int
@@ -110,8 +109,7 @@ fn bench_simple(cfg: Config, nusers: Int) -> RealworldResult {
   let query_ms = now_ms() - t0
   let assert True = result.count == nusers
 
-  let assert Ok(_) =
-    postgleam.simple_query(conn, "DROP TABLE bench_users")
+  let assert Ok(_) = postgleam.simple_query(conn, "DROP TABLE bench_users")
   postgleam.disconnect(conn)
 
   RealworldResult(name: label, insert_ms: insert_ms, query_ms: query_ms)
@@ -258,12 +256,9 @@ fn bench_real(cfg: Config) -> RealworldResult {
   let query_ms = now_ms() - t0
 
   // Cleanup
-  let assert Ok(_) =
-    postgleam.simple_query(conn, "DROP TABLE bench_comments")
-  let assert Ok(_) =
-    postgleam.simple_query(conn, "DROP TABLE bench_articles")
-  let assert Ok(_) =
-    postgleam.simple_query(conn, "DROP TABLE bench_real_users")
+  let assert Ok(_) = postgleam.simple_query(conn, "DROP TABLE bench_comments")
+  let assert Ok(_) = postgleam.simple_query(conn, "DROP TABLE bench_articles")
+  let assert Ok(_) = postgleam.simple_query(conn, "DROP TABLE bench_real_users")
   postgleam.disconnect(conn)
 
   RealworldResult(name: label, insert_ms: insert_ms, query_ms: query_ms)
@@ -462,8 +457,7 @@ fn bench_many(cfg: Config, nusers: Int) -> RealworldResult {
   query_many_loop(conn, 0, 1000, nusers, user_decoder)
   let query_ms = now_ms() - t0
 
-  let assert Ok(_) =
-    postgleam.simple_query(conn, "DROP TABLE bench_many_users")
+  let assert Ok(_) = postgleam.simple_query(conn, "DROP TABLE bench_many_users")
   postgleam.disconnect(conn)
 
   RealworldResult(name: label, insert_ms: insert_ms, query_ms: query_ms)
@@ -620,9 +614,7 @@ fn format_k(n: Int) -> String {
 
 fn print_realworld_table(results: List(RealworldResult)) -> Nil {
   io.println("")
-  io.println(
-    "Real-World Benchmark Results (modeled after go-sqlite-bench)",
-  )
+  io.println("Real-World Benchmark Results (modeled after go-sqlite-bench)")
   io.println(string.repeat("=", 65))
   io.println(
     pad_right("Benchmark", 25)
@@ -696,27 +688,22 @@ fn load_previous_results() -> Result(List(RealworldResult), Nil) {
   }
 }
 
-fn parse_realworld_json(
-  raw: String,
-) -> Result(List(RealworldResult), Nil) {
-  let result_decoder =
-    {
-      use name <- dyn_decode.field("name", dyn_decode.string)
-      use insert_ms <- dyn_decode.field("insert_ms", dyn_decode.int)
-      use query_ms <- dyn_decode.field("query_ms", dyn_decode.int)
-      dyn_decode.success(RealworldResult(
-        name: name,
-        insert_ms: insert_ms,
-        query_ms: query_ms,
-      ))
-    }
+fn parse_realworld_json(raw: String) -> Result(List(RealworldResult), Nil) {
+  let result_decoder = {
+    use name <- dyn_decode.field("name", dyn_decode.string)
+    use insert_ms <- dyn_decode.field("insert_ms", dyn_decode.int)
+    use query_ms <- dyn_decode.field("query_ms", dyn_decode.int)
+    dyn_decode.success(RealworldResult(
+      name: name,
+      insert_ms: insert_ms,
+      query_ms: query_ms,
+    ))
+  }
 
   let report_decoder =
-    dyn_decode.field(
-      "results",
-      dyn_decode.list(result_decoder),
-      fn(results) { dyn_decode.success(results) },
-    )
+    dyn_decode.field("results", dyn_decode.list(result_decoder), fn(results) {
+      dyn_decode.success(results)
+    })
 
   case json.parse(raw, report_decoder) {
     Ok(results) -> Ok(results)
@@ -742,8 +729,7 @@ fn print_comparison(
   io.println(string.repeat("-", 80))
 
   list.each(current, fn(curr) {
-    let prev_match =
-      list.find(previous, fn(p) { p.name == curr.name })
+    let prev_match = list.find(previous, fn(p) { p.name == curr.name })
 
     case prev_match {
       Ok(prev) -> {
@@ -751,8 +737,7 @@ fn print_comparison(
         let curr_total = curr.insert_ms + curr.query_ms
         let delta = case prev_total > 0 {
           True -> {
-            let pct =
-              { { curr_total - prev_total } * 100 } / prev_total
+            let pct = { { curr_total - prev_total } * 100 } / prev_total
             case pct >= 0 {
               True -> "+" <> int.to_string(pct) <> "%"
               False -> int.to_string(pct) <> "%"
@@ -762,8 +747,7 @@ fn print_comparison(
         }
         let status = case prev_total > 0 {
           True -> {
-            let pct =
-              { { curr_total - prev_total } * 100 } / prev_total
+            let pct = { { curr_total - prev_total } * 100 } / prev_total
             case pct {
               p if p < -5 -> " FASTER"
               p if p > 5 -> " SLOWER"

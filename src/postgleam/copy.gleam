@@ -1,5 +1,4 @@
 /// COPY protocol support for bulk data transfer.
-
 import gleam/option.{None}
 import gleam/result
 import postgleam/connection.{type ConnectionState}
@@ -14,17 +13,16 @@ pub fn copy_in(
   timeout: Int,
 ) -> Result(#(String, ConnectionState), Error) {
   // Send the COPY command via simple query
-  use state <- result.try(
-    connection.send_message(state, message.SimpleQuery(sql)),
-  )
+  use state <- result.try(connection.send_message(
+    state,
+    message.SimpleQuery(sql),
+  ))
   // Receive CopyInResponse
   use state <- result.try(recv_copy_in_response(state, timeout))
   // Send CopyData messages
   use state <- result.try(send_copy_data(state, data))
   // Send CopyDone
-  use state <- result.try(
-    connection.send_message(state, message.CopyDoneMsg),
-  )
+  use state <- result.try(connection.send_message(state, message.CopyDoneMsg))
   // Receive CommandComplete + ReadyForQuery
   recv_copy_complete(state, timeout)
 }
@@ -35,9 +33,10 @@ pub fn copy_out(
   sql: String,
   timeout: Int,
 ) -> Result(#(List(BitArray), ConnectionState), Error) {
-  use state <- result.try(
-    connection.send_message(state, message.SimpleQuery(sql)),
-  )
+  use state <- result.try(connection.send_message(
+    state,
+    message.SimpleQuery(sql),
+  ))
   use state <- result.try(recv_copy_out_response(state, timeout))
   recv_copy_out_data(state, timeout, [])
 }
@@ -51,7 +50,11 @@ fn recv_copy_in_response(
     message.CopyInResponse(_, _) -> Ok(state)
     message.ErrorResponse(fields) -> {
       let pg_fields = error.parse_error_fields(fields)
-      Error(error.PgError(fields: pg_fields, connection_id: state.connection_id, query: None))
+      Error(error.PgError(
+        fields: pg_fields,
+        connection_id: state.connection_id,
+        query: None,
+      ))
     }
     message.NoticeResponse(_) -> recv_copy_in_response(state, timeout)
     _ -> Error(error.ProtocolError("Expected CopyInResponse"))
@@ -67,7 +70,11 @@ fn recv_copy_out_response(
     message.CopyOutResponse(_, _) -> Ok(state)
     message.ErrorResponse(fields) -> {
       let pg_fields = error.parse_error_fields(fields)
-      Error(error.PgError(fields: pg_fields, connection_id: state.connection_id, query: None))
+      Error(error.PgError(
+        fields: pg_fields,
+        connection_id: state.connection_id,
+        query: None,
+      ))
     }
     message.NoticeResponse(_) -> recv_copy_out_response(state, timeout)
     _ -> Error(error.ProtocolError("Expected CopyOutResponse"))
@@ -81,9 +88,10 @@ fn send_copy_data(
   case data {
     [] -> Ok(state)
     [chunk, ..rest] -> {
-      use state <- result.try(
-        connection.send_message(state, message.CopyDataMsg(chunk)),
-      )
+      use state <- result.try(connection.send_message(
+        state,
+        message.CopyDataMsg(chunk),
+      ))
       send_copy_data(state, rest)
     }
   }
@@ -97,16 +105,26 @@ fn recv_copy_complete(
   case msg {
     message.CommandComplete(tag) -> {
       // Receive ReadyForQuery
-      use #(msg2, state) <- result.try(connection.receive_message(state, timeout))
+      use #(msg2, state) <- result.try(connection.receive_message(
+        state,
+        timeout,
+      ))
       case msg2 {
         message.ReadyForQuery(status) ->
-          Ok(#(tag, connection.ConnectionState(..state, transaction_status: status)))
+          Ok(#(
+            tag,
+            connection.ConnectionState(..state, transaction_status: status),
+          ))
         _ -> Ok(#(tag, state))
       }
     }
     message.ErrorResponse(fields) -> {
       let pg_fields = error.parse_error_fields(fields)
-      Error(error.PgError(fields: pg_fields, connection_id: state.connection_id, query: None))
+      Error(error.PgError(
+        fields: pg_fields,
+        connection_id: state.connection_id,
+        query: None,
+      ))
     }
     message.NoticeResponse(_) -> recv_copy_complete(state, timeout)
     _ -> Error(error.ProtocolError("Expected CommandComplete after COPY"))
@@ -120,17 +138,25 @@ fn recv_copy_out_data(
 ) -> Result(#(List(BitArray), ConnectionState), Error) {
   use #(msg, state) <- result.try(connection.receive_message(state, timeout))
   case msg {
-    message.CopyData(data) ->
-      recv_copy_out_data(state, timeout, [data, ..acc])
+    message.CopyData(data) -> recv_copy_out_data(state, timeout, [data, ..acc])
     message.CopyDone -> {
       // Receive CommandComplete + ReadyForQuery
-      use #(msg2, state) <- result.try(connection.receive_message(state, timeout))
+      use #(msg2, state) <- result.try(connection.receive_message(
+        state,
+        timeout,
+      ))
       case msg2 {
         message.CommandComplete(_) -> {
-          use #(msg3, state) <- result.try(connection.receive_message(state, timeout))
+          use #(msg3, state) <- result.try(connection.receive_message(
+            state,
+            timeout,
+          ))
           case msg3 {
             message.ReadyForQuery(status) ->
-              Ok(#(list_reverse(acc), connection.ConnectionState(..state, transaction_status: status)))
+              Ok(#(
+                list_reverse(acc),
+                connection.ConnectionState(..state, transaction_status: status),
+              ))
             _ -> Ok(#(list_reverse(acc), state))
           }
         }
@@ -139,7 +165,11 @@ fn recv_copy_out_data(
     }
     message.ErrorResponse(fields) -> {
       let pg_fields = error.parse_error_fields(fields)
-      Error(error.PgError(fields: pg_fields, connection_id: state.connection_id, query: None))
+      Error(error.PgError(
+        fields: pg_fields,
+        connection_id: state.connection_id,
+        query: None,
+      ))
     }
     _ -> Error(error.ProtocolError("Expected CopyData or CopyDone"))
   }

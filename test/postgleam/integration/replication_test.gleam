@@ -224,7 +224,11 @@ pub fn replication_receive_wal_data_test() {
 
   // Clean up
   let assert Ok(#(_, writer)) =
-    connection.simple_query(writer, "DROP TABLE IF EXISTS repl_test", cfg.timeout)
+    connection.simple_query(
+      writer,
+      "DROP TABLE IF EXISTS repl_test",
+      cfg.timeout,
+    )
   connection.disconnect(writer)
   replication.disconnect(repl_state)
 }

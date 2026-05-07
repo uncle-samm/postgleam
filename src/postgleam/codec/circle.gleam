@@ -1,8 +1,9 @@
 /// PostgreSQL circle codec - binary format
 /// Wire: 24 bytes = center x (float64) + center y (float64) + radius (float64)
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Circle}
 
 pub const oid = 718

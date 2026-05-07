@@ -1,8 +1,9 @@
 /// PostgreSQL bytea codec - binary format
 /// Wire: variable length raw bytes
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Bytea}
 
 /// OID for bytea

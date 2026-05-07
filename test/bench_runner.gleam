@@ -1,6 +1,5 @@
 /// Benchmark runner entry point.
 /// Invoke via: gleam build && erl -pa build/dev/erlang/*/ebin -noshell -run bench_runner main -- <args>
-
 import bench/codec_bench
 import bench/compare
 import bench/decode_bench
@@ -94,10 +93,7 @@ fn run_realworld() -> Nil {
 }
 
 /// Auto-compare current results with previous saved results
-fn auto_compare(
-  path: String,
-  current: runner.BenchReport,
-) -> Nil {
+fn auto_compare(path: String, current: runner.BenchReport) -> Nil {
   case runner.read_file(path) {
     Ok(prev_json) -> {
       // Write current to a temp file for comparison

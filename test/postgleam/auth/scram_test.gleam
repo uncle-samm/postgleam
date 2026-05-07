@@ -69,6 +69,20 @@ pub fn scram_verify_server_error_test() {
   should.be_true(string_contains(msg, "SCRAM server error"))
 }
 
+pub fn scram_invalid_server_salt_test() {
+  let #(_, data) = scram.client_first()
+  let assert Ok(bare) = scram.extract_client_first_bare(data)
+
+  let result =
+    scram.client_final(
+      <<"r=clientserver,s=not-base64!,i=4096":utf8>>,
+      bare,
+      "password",
+    )
+
+  should.be_error(result)
+}
+
 @external(erlang, "postgleam_test_ffi", "string_starts_with")
 fn string_starts_with(s: String, prefix: String) -> Bool
 

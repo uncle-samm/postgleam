@@ -1,7 +1,7 @@
 /// LISTEN/NOTIFY support for PostgreSQL pub/sub notifications.
 /// Uses a dedicated connection that listens for notifications.
-
 import gleam/result
+import gleam/string
 import postgleam/connection.{type ConnectionState, ConnectionState}
 import postgleam/error.{type Error}
 import postgleam/message
@@ -17,9 +17,11 @@ pub fn listen(
   channel: String,
   timeout: Int,
 ) -> Result(ConnectionState, Error) {
-  use #(_, state) <- result.try(
-    connection.simple_query(state, "LISTEN " <> quote_identifier(channel), timeout),
-  )
+  use #(_, state) <- result.try(connection.simple_query(
+    state,
+    "LISTEN " <> quote_identifier(channel),
+    timeout,
+  ))
   Ok(state)
 }
 
@@ -29,9 +31,11 @@ pub fn unlisten(
   channel: String,
   timeout: Int,
 ) -> Result(ConnectionState, Error) {
-  use #(_, state) <- result.try(
-    connection.simple_query(state, "UNLISTEN " <> quote_identifier(channel), timeout),
-  )
+  use #(_, state) <- result.try(connection.simple_query(
+    state,
+    "UNLISTEN " <> quote_identifier(channel),
+    timeout,
+  ))
   Ok(state)
 }
 
@@ -60,9 +64,11 @@ pub fn receive_notifications(
   timeout: Int,
 ) -> Result(#(List(Notification), ConnectionState), Error) {
   // Send a simple SELECT to trigger the server to send any queued notifications
-  use #(_, state) <- result.try(
-    connection.simple_query(state, "SELECT 1", timeout),
-  )
+  use #(_, state) <- result.try(connection.simple_query(
+    state,
+    "SELECT 1",
+    timeout,
+  ))
   // Check the buffer for any NotificationResponse messages
   collect_notifications(state, timeout, [])
 }
@@ -74,8 +80,12 @@ fn collect_notifications(
 ) -> Result(#(List(Notification), ConnectionState), Error) {
   // Check buffer for notifications without blocking
   case message.decode_backend(state.buffer) {
-    message.Decoded(message.NotificationResponse(pg_pid, channel, payload), _rest) -> {
-      let notif = Notification(channel: channel, payload: payload, pg_pid: pg_pid)
+    message.Decoded(
+      message.NotificationResponse(pg_pid, channel, payload),
+      _rest,
+    ) -> {
+      let notif =
+        Notification(channel: channel, payload: payload, pg_pid: pg_pid)
       let state = ConnectionState(..state, buffer: <<>>)
       collect_notifications(state, 0, [notif, ..acc])
     }
@@ -95,9 +105,9 @@ fn list_reverse_loop(l: List(a), acc: List(a)) -> List(a) {
 }
 
 fn quote_identifier(s: String) -> String {
-  "\"" <> s <> "\""
+  "\"" <> string.replace(s, "\"", "\"\"") <> "\""
 }
 
 fn quote_literal(s: String) -> String {
-  "'" <> s <> "'"
+  "'" <> string.replace(s, "'", "''") <> "'"
 }

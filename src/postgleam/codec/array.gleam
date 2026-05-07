@@ -4,7 +4,6 @@
 ///       + per-element: -1(int32) for NULL | byte_len(int32) + data
 ///
 /// Only supports 1-dimensional arrays.
-
 import gleam/bit_array
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -30,30 +29,54 @@ pub fn build_array_codec(element_codec: Codec, array_oid: Int) -> Codec {
 /// Hardcoded array OID -> element OID mapping for common types
 pub fn array_oid_map() -> List(#(Int, Int)) {
   [
-    #(1000, 16),     // bool[]
-    #(1005, 21),     // int2[]
-    #(1007, 23),     // int4[]
-    #(1016, 20),     // int8[]
-    #(1021, 700),    // float4[]
-    #(1022, 701),    // float8[]
-    #(1009, 25),     // text[]
-    #(1015, 1043),   // varchar[]
-    #(1001, 17),     // bytea[]
-    #(2951, 2950),   // uuid[]
-    #(199, 114),     // json[]
-    #(3807, 3802),   // jsonb[]
-    #(1231, 1700),   // numeric[]
-    #(1182, 1082),   // date[]
-    #(1183, 1083),   // time[]
-    #(1270, 1266),   // timetz[]
-    #(1115, 1114),   // timestamp[]
-    #(1185, 1184),   // timestamptz[]
-    #(1187, 1186),   // interval[]
-    #(1028, 26),     // oid[]
-    #(1003, 19),     // name[]
-    #(1041, 869),    // inet[]
-    #(1040, 829),    // macaddr[]
-    #(1017, 600),    // point[]
+    #(1000, 16),
+    // bool[]
+    #(1005, 21),
+    // int2[]
+    #(1007, 23),
+    // int4[]
+    #(1016, 20),
+    // int8[]
+    #(1021, 700),
+    // float4[]
+    #(1022, 701),
+    // float8[]
+    #(1009, 25),
+    // text[]
+    #(1015, 1043),
+    // varchar[]
+    #(1001, 17),
+    // bytea[]
+    #(2951, 2950),
+    // uuid[]
+    #(199, 114),
+    // json[]
+    #(3807, 3802),
+    // jsonb[]
+    #(1231, 1700),
+    // numeric[]
+    #(1182, 1082),
+    // date[]
+    #(1183, 1083),
+    // time[]
+    #(1270, 1266),
+    // timetz[]
+    #(1115, 1114),
+    // timestamp[]
+    #(1185, 1184),
+    // timestamptz[]
+    #(1187, 1186),
+    // interval[]
+    #(1028, 26),
+    // oid[]
+    #(1003, 19),
+    // name[]
+    #(1041, 869),
+    // inet[]
+    #(1040, 829),
+    // macaddr[]
+    #(1017, 600),
+    // point[]
   ]
 }
 
@@ -63,10 +86,7 @@ pub fn register_arrays(base: Registry) -> Registry {
   register_arrays_loop(array_oid_map(), base)
 }
 
-fn register_arrays_loop(
-  mappings: List(#(Int, Int)),
-  reg: Registry,
-) -> Registry {
+fn register_arrays_loop(mappings: List(#(Int, Int)), reg: Registry) -> Registry {
   case mappings {
     [] -> reg
     [#(array_oid, elem_oid), ..rest] -> {
@@ -103,8 +123,7 @@ fn encode_array(
           }
           // Header: ndim=1, has_null, elem_oid, length, lower_bound=1
           let header = <<
-            1:32-big, has_null:32-big, elem_oid:32-big,
-            len:32-big, 1:32-big,
+            1:32-big, has_null:32-big, elem_oid:32-big, len:32-big, 1:32-big,
           >>
           case encode_elements(elements, elem_encode, <<>>) {
             Ok(body) -> Ok(<<header:bits, body:bits>>)
@@ -130,11 +149,11 @@ fn encode_elements(
       case elem_encode(val) {
         Ok(encoded) -> {
           let len = bit_array.byte_size(encoded)
-          encode_elements(
-            rest,
-            elem_encode,
-            <<acc:bits, len:32-big, encoded:bits>>,
-          )
+          encode_elements(rest, elem_encode, <<
+            acc:bits,
+            len:32-big,
+            encoded:bits,
+          >>)
         }
         Error(e) -> Error("array codec: element encode failed: " <> e)
       }
@@ -151,8 +170,14 @@ fn decode_array(
     // Empty array (ndim=0)
     <<0:32-big, _has_null:32-big, _elem_oid:32-big>> -> Ok(Array([]))
     // 1-dimensional array
-    <<1:32-big, _has_null:32-big, _elem_oid:32-big,
-      length:32-big, _lower_bound:32-big, rest:bits>> ->
+    <<
+      1:32-big,
+      _has_null:32-big,
+      _elem_oid:32-big,
+      length:32-big,
+      _lower_bound:32-big,
+      rest:bits,
+    >> ->
       case decode_elements(rest, length, elem_decode, []) {
         Ok(elements) -> Ok(Array(list.reverse(elements)))
         Error(e) -> Error(e)
@@ -182,8 +207,7 @@ fn decode_elements(
                 Some(val),
                 ..acc
               ])
-            Error(e) ->
-              Error("array codec: element decode failed: " <> e)
+            Error(e) -> Error("array codec: element decode failed: " <> e)
           }
         _ -> Error("array codec: unexpected end of array data")
       }

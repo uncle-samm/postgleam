@@ -16,7 +16,6 @@
 /// )
 /// postgleam.disconnect(conn)
 /// ```
-
 import gleam/erlang/process.{type Subject}
 import gleam/list
 import gleam/option.{type Option, None, Some}
@@ -51,8 +50,7 @@ pub fn connect(config: Config) -> Result(Connection, Error) {
     Ok(started) -> Ok(Connection(subject: started.data, config: config))
     Error(actor.InitTimeout) ->
       Error(error.ConnectionError("Connection initialization timed out"))
-    Error(actor.InitFailed(reason)) ->
-      Error(error.ConnectionError(reason))
+    Error(actor.InitFailed(reason)) -> Error(error.ConnectionError(reason))
     Error(actor.InitExited(_)) ->
       Error(error.ConnectionError("Connection process exited during init"))
   }
@@ -182,10 +180,7 @@ pub fn copy_in(
 /// Export data using the COPY protocol.
 /// `sql` should be a COPY ... TO STDOUT statement.
 /// Returns the raw data chunks from PostgreSQL.
-pub fn copy_out(
-  conn: Connection,
-  sql: String,
-) -> Result(List(BitArray), Error) {
+pub fn copy_out(conn: Connection, sql: String) -> Result(List(BitArray), Error) {
   process.call(conn.subject, conn.config.timeout, fn(reply) {
     connection_actor.CopyOut(sql, reply)
   })

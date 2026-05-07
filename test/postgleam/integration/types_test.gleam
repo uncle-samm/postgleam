@@ -39,7 +39,9 @@ pub fn time_roundtrip_test() {
 pub fn timestamp_roundtrip_test() {
   let assert Ok(conn) = postgleam.connect(test_config())
   let assert Ok(result) =
-    postgleam.query(conn, "SELECT $1::timestamp AS val", [Some(value.Timestamp(0))])
+    postgleam.query(conn, "SELECT $1::timestamp AS val", [
+      Some(value.Timestamp(0)),
+    ])
   should.equal(result.rows, [[Some(value.Timestamp(0))]])
   postgleam.disconnect(conn)
 }
@@ -63,7 +65,9 @@ pub fn timestamp_neg_infinity_test() {
 pub fn timestamptz_roundtrip_test() {
   let assert Ok(conn) = postgleam.connect(test_config())
   let assert Ok(result) =
-    postgleam.query(conn, "SELECT $1::timestamptz AS val", [Some(value.Timestamptz(0))])
+    postgleam.query(conn, "SELECT $1::timestamptz AS val", [
+      Some(value.Timestamptz(0)),
+    ])
   should.equal(result.rows, [[Some(value.Timestamptz(0))]])
   postgleam.disconnect(conn)
 }
@@ -112,8 +116,7 @@ pub fn numeric_roundtrip_test() {
 
 pub fn numeric_zero_test() {
   let assert Ok(conn) = postgleam.connect(test_config())
-  let assert Ok(result) =
-    postgleam.query(conn, "SELECT 0::numeric AS val", [])
+  let assert Ok(result) = postgleam.query(conn, "SELECT 0::numeric AS val", [])
   let assert [[Some(value.Numeric(s))]] = result.rows
   should.equal(s, "0")
   postgleam.disconnect(conn)
@@ -175,8 +178,15 @@ pub fn multiple_types_in_one_query_test() {
       "SELECT 42::int4 AS i, true::bool AS b, 'hello'::text AS t, 3.14::float8 AS f, $1::date AS d",
       [Some(value.Date(100))],
     )
-  let assert [[Some(value.Integer(42)), Some(value.Boolean(True)), Some(value.Text("hello")), Some(value.Float(_)), Some(value.Date(100))]] =
-    result.rows
+  let assert [
+    [
+      Some(value.Integer(42)),
+      Some(value.Boolean(True)),
+      Some(value.Text("hello")),
+      Some(value.Float(_)),
+      Some(value.Date(100)),
+    ],
+  ] = result.rows
   postgleam.disconnect(conn)
 }
 
@@ -317,10 +327,24 @@ pub fn int4_array_roundtrip_test() {
   let assert Ok(conn) = postgleam.connect(test_config())
   let assert Ok(result) =
     postgleam.query(conn, "SELECT $1::int4[] AS val", [
-      Some(value.Array([Some(value.Integer(1)), Some(value.Integer(2)), Some(value.Integer(3))])),
+      Some(
+        value.Array([
+          Some(value.Integer(1)),
+          Some(value.Integer(2)),
+          Some(value.Integer(3)),
+        ]),
+      ),
     ])
   should.equal(result.rows, [
-    [Some(value.Array([Some(value.Integer(1)), Some(value.Integer(2)), Some(value.Integer(3))]))],
+    [
+      Some(
+        value.Array([
+          Some(value.Integer(1)),
+          Some(value.Integer(2)),
+          Some(value.Integer(3)),
+        ]),
+      ),
+    ],
   ])
   postgleam.disconnect(conn)
 }

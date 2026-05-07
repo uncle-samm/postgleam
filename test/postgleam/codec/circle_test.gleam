@@ -4,10 +4,7 @@ import postgleam/value
 
 pub fn circle_encode_test() {
   let assert Ok(encoded) = circle.encode(value.Circle(1.0, 2.0, 3.0))
-  should.equal(
-    encoded,
-    <<1.0:float-64-big, 2.0:float-64-big, 3.0:float-64-big>>,
-  )
+  should.equal(encoded, <<1.0:float-64-big, 2.0:float-64-big, 3.0:float-64-big>>)
 }
 
 pub fn circle_decode_test() {

@@ -1,5 +1,4 @@
 /// Benchmark harness — extracts stats from gleamy_bench results and writes JSON.
-
 import gleam/float
 import gleam/int
 import gleam/io

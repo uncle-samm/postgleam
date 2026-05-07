@@ -32,8 +32,7 @@ pub fn pool_simple_query_test() {
   let assert Ok(started) = pool.start(cfg, 2)
   let p = started.data
 
-  let assert Ok(results) =
-    pool.simple_query(p, "SELECT 1 AS num", cfg.timeout)
+  let assert Ok(results) = pool.simple_query(p, "SELECT 1 AS num", cfg.timeout)
   let assert [result] = results
   should.equal(result.tag, "SELECT 1")
 
@@ -47,7 +46,8 @@ pub fn pool_sequential_queries_test() {
 
   let assert Ok(_) = pool.query(p, "SELECT 1::int4", [], cfg.timeout)
   let assert Ok(_) = pool.query(p, "SELECT 2::int4", [], cfg.timeout)
-  let assert Ok(result) = pool.query(p, "SELECT 3::int4 AS val", [], cfg.timeout)
+  let assert Ok(result) =
+    pool.query(p, "SELECT 3::int4 AS val", [], cfg.timeout)
   should.equal(result.rows, [[Some(value.Integer(3))]])
 
   pool.shutdown(p, cfg.timeout)

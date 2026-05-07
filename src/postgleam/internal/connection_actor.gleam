@@ -1,6 +1,5 @@
 /// OTP actor wrapping a PostgreSQL connection.
 /// Handles sequential query execution through typed messages.
-
 import gleam/dict.{type Dict}
 import gleam/erlang/process.{type Subject}
 import gleam/int
@@ -28,9 +27,7 @@ pub type Message {
   /// Execute a simple (text) query
   SimpleQuery(
     sql: String,
-    reply: Subject(
-      Result(List(connection.SimpleQueryResult), Error),
-    ),
+    reply: Subject(Result(List(connection.SimpleQueryResult), Error)),
   )
   /// Prepare a named statement
   Prepare(
@@ -51,10 +48,7 @@ pub type Message {
     reply: Subject(Result(List(ExtendedQueryResult), Error)),
   )
   /// Close a prepared statement
-  CloseStatement(
-    name: String,
-    reply: Subject(Result(Nil, Error)),
-  )
+  CloseStatement(name: String, reply: Subject(Result(Nil, Error)))
   /// COPY data into a table (bulk insert)
   CopyIn(
     sql: String,
@@ -62,10 +56,7 @@ pub type Message {
     reply: Subject(Result(String, Error)),
   )
   /// COPY data out of a table
-  CopyOut(
-    sql: String,
-    reply: Subject(Result(List(BitArray), Error)),
-  )
+  CopyOut(sql: String, reply: Subject(Result(List(BitArray), Error)))
   /// Disconnect
   Disconnect(reply: Subject(Nil))
 }
@@ -180,8 +171,7 @@ fn handle_message(
               {
                 Ok(#(prepared, conn)) -> {
                   let new_cache = dict.insert(state.cache, sql, prepared)
-                  let new_order =
-                    list.append(state.cache_order, [sql])
+                  let new_order = list.append(state.cache_order, [sql])
                   case
                     connection.execute_prepared(
                       conn,
@@ -242,9 +232,7 @@ fn handle_message(
     }
 
     Prepare(name, sql, reply) -> {
-      case
-        connection.prepare(state.conn, name, sql, [], state.config.timeout)
-      {
+      case connection.prepare(state.conn, name, sql, [], state.config.timeout) {
         Ok(#(prepared, conn)) -> {
           process.send(reply, Ok(prepared))
           actor.continue(ActorState(..state, conn: conn))
@@ -337,8 +325,7 @@ fn handle_message(
               {
                 Ok(#(prepared, conn)) -> {
                   let new_cache = dict.insert(state.cache, sql, prepared)
-                  let new_order =
-                    list.append(state.cache_order, [sql])
+                  let new_order = list.append(state.cache_order, [sql])
                   case
                     connection.execute_pipeline(
                       conn,
@@ -386,9 +373,7 @@ fn handle_message(
     }
 
     CloseStatement(name, reply) -> {
-      case
-        connection.close_statement(state.conn, name, state.config.timeout)
-      {
+      case connection.close_statement(state.conn, name, state.config.timeout) {
         Ok(conn) -> {
           process.send(reply, Ok(Nil))
           actor.continue(ActorState(..state, conn: conn))
@@ -468,8 +453,7 @@ fn evict_if_needed(state: ActorState) -> ActorState {
 
 fn error_to_string(err: Error) -> String {
   case err {
-    error.PgError(fields, _, _) ->
-      "PostgreSQL error: " <> fields.message
+    error.PgError(fields, _, _) -> "PostgreSQL error: " <> fields.message
     error.ConnectionError(msg) -> "Connection error: " <> msg
     error.AuthenticationError(msg) -> "Authentication error: " <> msg
     error.EncodeError(msg) -> "Encode error: " <> msg

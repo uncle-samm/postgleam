@@ -1,6 +1,5 @@
 /// Comprehensive smoke test that exercises every major postgleam feature
 /// against a live PostgreSQL instance. Each test is self-contained.
-
 import gleam/option.{None, Some}
 import gleeunit/should
 import postgleam
@@ -54,10 +53,7 @@ pub fn smoke_transaction_commit_test() {
 
   // Use TEMP TABLE to avoid replication/replica identity issues
   let assert Ok(_) =
-    postgleam.simple_query(
-      conn,
-      "CREATE TEMP TABLE _smoke_tx (id int)",
-    )
+    postgleam.simple_query(conn, "CREATE TEMP TABLE _smoke_tx (id int)")
 
   // Transaction that commits
   let assert Ok(42) =
@@ -82,10 +78,7 @@ pub fn smoke_transaction_rollback_test() {
   let assert Ok(conn) = postgleam.connect(cfg)
 
   let assert Ok(_) =
-    postgleam.simple_query(
-      conn,
-      "CREATE TEMP TABLE _smoke_tx2 (id int)",
-    )
+    postgleam.simple_query(conn, "CREATE TEMP TABLE _smoke_tx2 (id int)")
 
   // Transaction that rolls back
   let assert Error(_) =
@@ -125,12 +118,17 @@ pub fn smoke_low_level_connection_test() {
     connection.extended_query(
       state,
       "SELECT $1::bool, $2::text, $3::float8",
-      [Some(value.Boolean(True)), Some(value.Text("gleam")), Some(value.Float(3.14))],
+      [
+        Some(value.Boolean(True)),
+        Some(value.Text("gleam")),
+        Some(value.Float(3.14)),
+      ],
       reg,
       cfg.timeout,
     )
-  let assert [[Some(value.Boolean(True)), Some(value.Text("gleam")), Some(value.Float(f))]] =
-    result.rows
+  let assert [
+    [Some(value.Boolean(True)), Some(value.Text("gleam")), Some(value.Float(f))],
+  ] = result.rows
   // Float comparison
   should.be_true(f >. 3.13 && f <. 3.15)
 
@@ -150,12 +148,20 @@ pub fn smoke_type_roundtrip_int_test() {
     connection.extended_query(
       state,
       "SELECT $1::int2, $2::int4, $3::int8",
-      [Some(value.Integer(123)), Some(value.Integer(456_789)), Some(value.Integer(9_876_543_210))],
+      [
+        Some(value.Integer(123)),
+        Some(value.Integer(456_789)),
+        Some(value.Integer(9_876_543_210)),
+      ],
       reg,
       cfg.timeout,
     )
   should.equal(r.rows, [
-    [Some(value.Integer(123)), Some(value.Integer(456_789)), Some(value.Integer(9_876_543_210))],
+    [
+      Some(value.Integer(123)),
+      Some(value.Integer(456_789)),
+      Some(value.Integer(9_876_543_210)),
+    ],
   ])
 
   connection.disconnect(state)
@@ -173,16 +179,19 @@ pub fn smoke_type_roundtrip_text_bytea_uuid_test() {
       [
         Some(value.Text("hello world")),
         Some(value.Bytea(<<0xDE, 0xAD, 0xBE, 0xEF>>)),
-        Some(value.Uuid(<<
-          0xA0, 0xEE, 0xBC, 0x99, 0x9C, 0x0B, 0x4E, 0xF8, 0xBB, 0x6D, 0x6B,
-          0xB9, 0xBD, 0x38, 0x0A, 0x11,
-        >>)),
+        Some(
+          value.Uuid(<<
+            0xA0, 0xEE, 0xBC, 0x99, 0x9C, 0x0B, 0x4E, 0xF8, 0xBB, 0x6D, 0x6B,
+            0xB9, 0xBD, 0x38, 0x0A, 0x11,
+          >>),
+        ),
       ],
       reg,
       cfg.timeout,
     )
-  let assert [[Some(value.Text("hello world")), Some(value.Bytea(b)), Some(value.Uuid(_))]] =
-    r.rows
+  let assert [
+    [Some(value.Text("hello world")), Some(value.Bytea(b)), Some(value.Uuid(_))],
+  ] = r.rows
   should.equal(b, <<0xDE, 0xAD, 0xBE, 0xEF>>)
 
   connection.disconnect(state)
@@ -207,8 +216,13 @@ pub fn smoke_type_roundtrip_date_time_test() {
       reg,
       cfg.timeout,
     )
-  let assert [[Some(value.Date(8780)), Some(value.Timestamp(756_864_000_000_000)), Some(value.Interval(microseconds: 3_600_000_000, days: 1, months: 2))]] =
-    r.rows
+  let assert [
+    [
+      Some(value.Date(8780)),
+      Some(value.Timestamp(756_864_000_000_000)),
+      Some(value.Interval(microseconds: 3_600_000_000, days: 1, months: 2)),
+    ],
+  ] = r.rows
 
   connection.disconnect(state)
 }
@@ -230,7 +244,9 @@ pub fn smoke_type_roundtrip_json_numeric_test() {
       reg,
       cfg.timeout,
     )
-  let assert [[Some(value.Json(_)), Some(value.Jsonb(_)), Some(value.Numeric(n))]] = r.rows
+  let assert [
+    [Some(value.Json(_)), Some(value.Jsonb(_)), Some(value.Numeric(n))],
+  ] = r.rows
   should.equal(n, "123456.789")
 
   connection.disconnect(state)
@@ -264,18 +280,37 @@ pub fn smoke_prepared_statement_test() {
   let assert Ok(state) = connection.connect(cfg)
 
   let assert Ok(#(prepared, state)) =
-    connection.prepare(state, "my_stmt", "SELECT $1::int4 * 2 AS doubled", [], cfg.timeout)
+    connection.prepare(
+      state,
+      "my_stmt",
+      "SELECT $1::int4 * 2 AS doubled",
+      [],
+      cfg.timeout,
+    )
 
   // Execute multiple times
   let assert Ok(#(r1, state)) =
-    connection.execute_prepared(state, prepared, [Some(value.Integer(5))], reg, cfg.timeout)
+    connection.execute_prepared(
+      state,
+      prepared,
+      [Some(value.Integer(5))],
+      reg,
+      cfg.timeout,
+    )
   should.equal(r1.rows, [[Some(value.Integer(10))]])
 
   let assert Ok(#(r2, state)) =
-    connection.execute_prepared(state, prepared, [Some(value.Integer(21))], reg, cfg.timeout)
+    connection.execute_prepared(
+      state,
+      prepared,
+      [Some(value.Integer(21))],
+      reg,
+      cfg.timeout,
+    )
   should.equal(r2.rows, [[Some(value.Integer(42))]])
 
-  let assert Ok(state) = connection.close_statement(state, "my_stmt", cfg.timeout)
+  let assert Ok(state) =
+    connection.close_statement(state, "my_stmt", cfg.timeout)
   connection.disconnect(state)
 }
 
@@ -296,7 +331,8 @@ pub fn smoke_pool_test() {
   should.equal(r2.rows, [[Some(value.Integer(2))]])
 
   // Error recovery
-  let assert Error(_) = pool.query(p, "SELECT * FROM nonexistent_xyz", [], cfg.timeout)
+  let assert Error(_) =
+    pool.query(p, "SELECT * FROM nonexistent_xyz", [], cfg.timeout)
   let assert Ok(r3) = pool.query(p, "SELECT 3::int4", [], cfg.timeout)
   should.equal(r3.rows, [[Some(value.Integer(3))]])
 
@@ -440,7 +476,8 @@ pub fn smoke_error_handling_test() {
   should.equal(r.tag, "SELECT 1")
 
   // Wrong table
-  let assert Error(_) = postgleam.query(conn, "SELECT * FROM nonexistent_abc", [])
+  let assert Error(_) =
+    postgleam.query(conn, "SELECT * FROM nonexistent_abc", [])
 
   // Still works
   let assert Ok(r2) = postgleam.query(conn, "SELECT 42::int4", [])

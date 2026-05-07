@@ -9,7 +9,6 @@
 ///
 /// These tests build an int4 array codec via build_array_codec and exercise
 /// the encode/decode through the Codec record's function fields.
-
 import gleam/option.{None, Some}
 import gleeunit/should
 import postgleam/codec
@@ -51,23 +50,16 @@ pub fn empty_array_decode_test() {
 pub fn single_element_encode_test() {
   let c = int4_array_codec()
   let assert Ok(encoded) = c.encode(value.Array([Some(value.Integer(42))]))
-  should.equal(
-    encoded,
-    <<
-      1:32-big, 0:32-big, 23:32-big,
-      1:32-big, 1:32-big,
-      4:32-big, 42:32-big,
-    >>,
-  )
+  should.equal(encoded, <<
+    1:32-big, 0:32-big, 23:32-big, 1:32-big, 1:32-big, 4:32-big, 42:32-big,
+  >>)
 }
 
 /// Single element decode [42]
 pub fn single_element_decode_test() {
   let c = int4_array_codec()
   let wire = <<
-    1:32-big, 0:32-big, 23:32-big,
-    1:32-big, 1:32-big,
-    4:32-big, 42:32-big,
+    1:32-big, 0:32-big, 23:32-big, 1:32-big, 1:32-big, 4:32-big, 42:32-big,
   >>
   c.decode(wire)
   |> should.equal(Ok(value.Array([Some(value.Integer(42))])))
@@ -94,24 +86,17 @@ pub fn array_with_null_encode_test() {
   let assert Ok(encoded) = c.encode(val)
   // ndim=1, has_null=1, elem_oid=23, length=2, lower_bound=1,
   // null (-1 as int32), elem_len=4, 1:32-big
-  should.equal(
-    encoded,
-    <<
-      1:32-big, 1:32-big, 23:32-big,
-      2:32-big, 1:32-big,
-      255, 255, 255, 255,
-      4:32-big, 1:32-big,
-    >>,
-  )
+  should.equal(encoded, <<
+    1:32-big, 1:32-big, 23:32-big, 2:32-big, 1:32-big, 255, 255, 255, 255,
+    4:32-big, 1:32-big,
+  >>)
 }
 
 /// Array with NULL decode
 pub fn array_with_null_decode_test() {
   let c = int4_array_codec()
   let wire = <<
-    1:32-big, 1:32-big, 23:32-big,
-    2:32-big, 1:32-big,
-    255, 255, 255, 255,
+    1:32-big, 1:32-big, 23:32-big, 2:32-big, 1:32-big, 255, 255, 255, 255,
     4:32-big, 1:32-big,
   >>
   c.decode(wire)
@@ -144,8 +129,7 @@ pub fn array_truncated_test() {
 /// Negative int4 values in array
 pub fn array_negative_values_test() {
   let c = int4_array_codec()
-  let val =
-    value.Array([Some(value.Integer(-1)), Some(value.Integer(-100))])
+  let val = value.Array([Some(value.Integer(-1)), Some(value.Integer(-100))])
   let assert Ok(encoded) = c.encode(val)
   c.decode(encoded)
   |> should.equal(Ok(val))

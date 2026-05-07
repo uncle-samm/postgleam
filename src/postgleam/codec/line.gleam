@@ -1,8 +1,9 @@
 /// PostgreSQL line codec - binary format
 /// Wire: 24 bytes = 3×float64 (A, B, C coefficients of line Ax + By + C = 0)
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Line}
 
 pub const oid = 628
@@ -18,7 +19,13 @@ pub fn matcher() -> CodecMatcher {
 }
 
 fn build(type_oid: Int) -> Codec {
-  Codec(type_name: "line", oid: type_oid, format: Binary, encode: encode, decode: decode)
+  Codec(
+    type_name: "line",
+    oid: type_oid,
+    format: Binary,
+    encode: encode,
+    decode: decode,
+  )
 }
 
 pub fn encode(val: Value) -> Result(BitArray, String) {

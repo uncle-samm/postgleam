@@ -184,7 +184,7 @@ let assert Ok(results) =
 config.default()
 |> config.ssl(config.SslVerified)
 
-// Unverified — skip certificate verification (for Neon, self-signed certs)
+// Unverified — skip certificate verification (compatibility mode only)
 config.default()
 |> config.ssl(config.SslUnverified)
 
@@ -246,9 +246,19 @@ docker compose up -d
 # Setup test database
 ./scripts/setup_test_db.sh
 
-# Run tests (379 tests)
+# Run tests (508 tests)
 gleam test
+
+# Run the full local validation gate
+make check
+
+# Run end-to-end infrastructure smoke checks
+make smoke
 ```
+
+For production connections, prefer `config.SslVerified`. `SslUnverified`,
+MD5 authentication, and cleartext authentication are compatibility modes for
+legacy or local environments.
 
 ## Target
 

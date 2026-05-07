@@ -27,7 +27,11 @@ pub type PgErrorFields {
 /// Errors that can occur during postgleam operations
 pub type Error {
   /// A PostgreSQL error response
-  PgError(fields: PgErrorFields, connection_id: Option(Int), query: Option(String))
+  PgError(
+    fields: PgErrorFields,
+    connection_id: Option(Int),
+    query: Option(String),
+  )
   /// Connection-level error
   ConnectionError(message: String)
   /// Authentication failed

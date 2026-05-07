@@ -3,16 +3,15 @@ import gleam/dict
 import gleam/option.{None, Some}
 import gleeunit/should
 import postgleam/message.{
-  AuthCleartext, AuthMd5, AuthOk, AuthSasl, AuthSaslContinue,
-  AuthenticationMsg, BackendKeyData, BinaryFormat, Bind, BindComplete,
-  CancelRequest, Close, CloseComplete, CommandComplete, CopyData, CopyDone,
-  CopyInResponse, CopyOutResponse, DataRow, Decoded,
-  Describe, DescribePortal, DescribeStatement, EmptyQueryResponse,
-  ErrorResponse, Execute, Flush, Incomplete, NoData, NoticeResponse,
-  NotificationResponse, ParameterDescription, ParameterStatus, Parse,
-  ParseComplete, PasswordMessage, PortalSuspended, ReadyForQuery,
-  RowDescription, SSLRequest, SimpleQuery, StartupMessage, Sync,
-  Terminate, TextFormat,
+  AuthCleartext, AuthMd5, AuthOk, AuthSasl, AuthSaslContinue, AuthenticationMsg,
+  BackendKeyData, BinaryFormat, Bind, BindComplete, CancelRequest, Close,
+  CloseComplete, CommandComplete, CopyData, CopyDone, CopyInResponse,
+  CopyOutResponse, DataRow, Decoded, Describe, DescribePortal, DescribeStatement,
+  EmptyQueryResponse, ErrorResponse, Execute, Flush, Incomplete, NoData,
+  NoticeResponse, NotificationResponse, ParameterDescription, ParameterStatus,
+  Parse, ParseComplete, PasswordMessage, PortalSuspended, ReadyForQuery,
+  RowDescription, SSLRequest, SimpleQuery, StartupMessage, Sync, Terminate,
+  TextFormat,
 }
 
 // =============================================================================
@@ -20,7 +19,8 @@ import postgleam/message.{
 // =============================================================================
 
 pub fn encode_startup_message_test() {
-  let msg = StartupMessage(params: [#("user", "postgres"), #("database", "mydb")])
+  let msg =
+    StartupMessage(params: [#("user", "postgres"), #("database", "mydb")])
   let bytes = message.encode_frontend(msg)
   // Should start with length (4 bytes), then version 3.0 (4 bytes)
   let assert <<_size:32-big-unsigned, 0, 3, 0, 0, rest:bits>> = bytes
@@ -44,7 +44,10 @@ pub fn encode_simple_query_test() {
 }
 
 pub fn encode_parse_test() {
-  let bytes = message.encode_frontend(Parse(name: "", statement: "SELECT $1", type_oids: [23]))
+  let bytes =
+    message.encode_frontend(
+      Parse(name: "", statement: "SELECT $1", type_oids: [23]),
+    )
   let assert <<0x50, _size:32-big-unsigned, rest:bits>> = bytes
   let assert Ok(#("", rest2)) = message.decode_cstring(rest)
   let assert Ok(#("SELECT $1", rest3)) = message.decode_cstring(rest2)
@@ -52,7 +55,10 @@ pub fn encode_parse_test() {
 }
 
 pub fn encode_parse_no_oids_test() {
-  let bytes = message.encode_frontend(Parse(name: "stmt1", statement: "SELECT 1", type_oids: []))
+  let bytes =
+    message.encode_frontend(
+      Parse(name: "stmt1", statement: "SELECT 1", type_oids: []),
+    )
   let assert <<0x50, _size:32-big-unsigned, rest:bits>> = bytes
   let assert Ok(#("stmt1", rest2)) = message.decode_cstring(rest)
   let assert Ok(#("SELECT 1", rest3)) = message.decode_cstring(rest2)
@@ -60,26 +66,31 @@ pub fn encode_parse_no_oids_test() {
 }
 
 pub fn encode_describe_statement_test() {
-  let bytes = message.encode_frontend(Describe(type_: DescribeStatement, name: ""))
+  let bytes =
+    message.encode_frontend(Describe(type_: DescribeStatement, name: ""))
   let assert <<0x44, _size:32-big-unsigned, 0x53, rest:bits>> = bytes
   let assert Ok(#("", <<>>)) = message.decode_cstring(rest)
 }
 
 pub fn encode_describe_portal_test() {
-  let bytes = message.encode_frontend(Describe(type_: DescribePortal, name: "p1"))
+  let bytes =
+    message.encode_frontend(Describe(type_: DescribePortal, name: "p1"))
   let assert <<0x44, _size:32-big-unsigned, 0x50, rest:bits>> = bytes
   let assert Ok(#("p1", <<>>)) = message.decode_cstring(rest)
 }
 
 pub fn encode_bind_test() {
   let params = [Some(<<0, 0, 0, 42>>), None]
-  let bytes = message.encode_frontend(Bind(
-    portal: "",
-    statement: "",
-    param_formats: [BinaryFormat],
-    params: params,
-    result_formats: [BinaryFormat],
-  ))
+  let bytes =
+    message.encode_frontend(
+      Bind(
+        portal: "",
+        statement: "",
+        param_formats: [BinaryFormat],
+        params: params,
+        result_formats: [BinaryFormat],
+      ),
+    )
   let assert <<0x42, _size:32-big-unsigned, _rest:bits>> = bytes
 }
 
@@ -104,20 +115,27 @@ pub fn encode_terminate_test() {
 }
 
 pub fn encode_close_statement_test() {
-  let bytes = message.encode_frontend(Close(type_: DescribeStatement, name: "stmt1"))
+  let bytes =
+    message.encode_frontend(Close(type_: DescribeStatement, name: "stmt1"))
   let assert <<0x43, _size:32-big-unsigned, 0x53, rest:bits>> = bytes
   let assert Ok(#("stmt1", <<>>)) = message.decode_cstring(rest)
 }
 
 pub fn encode_ssl_request_test() {
   let bytes = message.encode_frontend(SSLRequest)
-  let assert <<8:32-big-unsigned, 1234:16-big-unsigned, 5679:16-big-unsigned>> = bytes
+  let assert <<8:32-big-unsigned, 1234:16-big-unsigned, 5679:16-big-unsigned>> =
+    bytes
 }
 
 pub fn encode_cancel_request_test() {
-  let bytes = message.encode_frontend(CancelRequest(pid: 12345, key: 67890))
-  let assert <<16:32-big-unsigned, 1234:16-big-unsigned, 5678:16-big-unsigned,
-    12_345:32-big-unsigned, 67_890:32-big-unsigned>> = bytes
+  let bytes = message.encode_frontend(CancelRequest(pid: 12_345, key: 67_890))
+  let assert <<
+    16:32-big-unsigned,
+    1234:16-big-unsigned,
+    5678:16-big-unsigned,
+    12_345:32-big-unsigned,
+    67_890:32-big-unsigned,
+  >> = bytes
 }
 
 // =============================================================================
@@ -126,12 +144,14 @@ pub fn encode_cancel_request_test() {
 
 pub fn decode_auth_ok_test() {
   let data = <<0x52, 0, 0, 0, 8, 0, 0, 0, 0>>
-  let assert Decoded(AuthenticationMsg(AuthOk), <<>>) = message.decode_backend(data)
+  let assert Decoded(AuthenticationMsg(AuthOk), <<>>) =
+    message.decode_backend(data)
 }
 
 pub fn decode_auth_cleartext_test() {
   let data = <<0x52, 0, 0, 0, 8, 0, 0, 0, 3>>
-  let assert Decoded(AuthenticationMsg(AuthCleartext), <<>>) = message.decode_backend(data)
+  let assert Decoded(AuthenticationMsg(AuthCleartext), <<>>) =
+    message.decode_backend(data)
 }
 
 pub fn decode_auth_md5_test() {
@@ -170,23 +190,26 @@ pub fn decode_backend_key_data_test() {
   let data = <<0x4B, 0, 0, 0, 12, 0, 0, 48, 57, 0, 0, 171, 205>>
   let assert Decoded(BackendKeyData(pid: pid, key: key), <<>>) =
     message.decode_backend(data)
-  should.equal(pid, 12345)
-  should.equal(key, 43981)
+  should.equal(pid, 12_345)
+  should.equal(key, 43_981)
 }
 
 pub fn decode_ready_for_query_idle_test() {
   let data = <<0x5A, 0, 0, 0, 5, 0x49>>
-  let assert Decoded(ReadyForQuery(message.Idle), <<>>) = message.decode_backend(data)
+  let assert Decoded(ReadyForQuery(message.Idle), <<>>) =
+    message.decode_backend(data)
 }
 
 pub fn decode_ready_for_query_transaction_test() {
   let data = <<0x5A, 0, 0, 0, 5, 0x54>>
-  let assert Decoded(ReadyForQuery(message.InTransaction), <<>>) = message.decode_backend(data)
+  let assert Decoded(ReadyForQuery(message.InTransaction), <<>>) =
+    message.decode_backend(data)
 }
 
 pub fn decode_ready_for_query_error_test() {
   let data = <<0x5A, 0, 0, 0, 5, 0x45>>
-  let assert Decoded(ReadyForQuery(message.FailedTransaction), <<>>) = message.decode_backend(data)
+  let assert Decoded(ReadyForQuery(message.FailedTransaction), <<>>) =
+    message.decode_backend(data)
 }
 
 pub fn decode_parameter_status_test() {
@@ -200,34 +223,41 @@ pub fn decode_parameter_status_test() {
 }
 
 pub fn decode_parse_complete_test() {
-  let assert Decoded(ParseComplete, <<>>) = message.decode_backend(<<0x31, 0, 0, 0, 4>>)
+  let assert Decoded(ParseComplete, <<>>) =
+    message.decode_backend(<<0x31, 0, 0, 0, 4>>)
 }
 
 pub fn decode_bind_complete_test() {
-  let assert Decoded(BindComplete, <<>>) = message.decode_backend(<<0x32, 0, 0, 0, 4>>)
+  let assert Decoded(BindComplete, <<>>) =
+    message.decode_backend(<<0x32, 0, 0, 0, 4>>)
 }
 
 pub fn decode_close_complete_test() {
-  let assert Decoded(CloseComplete, <<>>) = message.decode_backend(<<0x33, 0, 0, 0, 4>>)
+  let assert Decoded(CloseComplete, <<>>) =
+    message.decode_backend(<<0x33, 0, 0, 0, 4>>)
 }
 
 pub fn decode_no_data_test() {
-  let assert Decoded(NoData, <<>>) = message.decode_backend(<<0x6E, 0, 0, 0, 4>>)
+  let assert Decoded(NoData, <<>>) =
+    message.decode_backend(<<0x6E, 0, 0, 0, 4>>)
 }
 
 pub fn decode_portal_suspended_test() {
-  let assert Decoded(PortalSuspended, <<>>) = message.decode_backend(<<0x73, 0, 0, 0, 4>>)
+  let assert Decoded(PortalSuspended, <<>>) =
+    message.decode_backend(<<0x73, 0, 0, 0, 4>>)
 }
 
 pub fn decode_empty_query_test() {
-  let assert Decoded(EmptyQueryResponse, <<>>) = message.decode_backend(<<0x49, 0, 0, 0, 4>>)
+  let assert Decoded(EmptyQueryResponse, <<>>) =
+    message.decode_backend(<<0x49, 0, 0, 0, 4>>)
 }
 
 pub fn decode_command_complete_test() {
   let tag = <<"SELECT 1":utf8, 0>>
   let payload_size = bit_array.byte_size(tag) + 4
   let data = <<0x43, payload_size:32-big, tag:bits>>
-  let assert Decoded(CommandComplete(tag: t), <<>>) = message.decode_backend(data)
+  let assert Decoded(CommandComplete(tag: t), <<>>) =
+    message.decode_backend(data)
   should.equal(t, "SELECT 1")
 }
 
@@ -235,7 +265,8 @@ pub fn decode_command_complete_insert_test() {
   let tag = <<"INSERT 0 1":utf8, 0>>
   let payload_size = bit_array.byte_size(tag) + 4
   let data = <<0x43, payload_size:32-big, tag:bits>>
-  let assert Decoded(CommandComplete(tag: t), <<>>) = message.decode_backend(data)
+  let assert Decoded(CommandComplete(tag: t), <<>>) =
+    message.decode_backend(data)
   should.equal(t, "INSERT 0 1")
 }
 
@@ -244,12 +275,18 @@ pub fn decode_row_description_test() {
   let name = <<"id":utf8, 0>>
   let field_data = <<
     name:bits,
-    0:32,     // table_oid
-    1:16,     // column
-    23:32,    // type_oid (int4)
-    4:16,     // type_size
-    0:32,     // type_mod
-    0:16,     // format (text)
+    0:32,
+    // table_oid
+    1:16,
+    // column
+    23:32,
+    // type_oid (int4)
+    4:16,
+    // type_size
+    0:32,
+    // type_mod
+    0:16,
+    // format (text)
   >>
   let payload = <<1:16, field_data:bits>>
   let payload_size = bit_array.byte_size(payload) + 4
@@ -268,17 +305,16 @@ pub fn decode_data_row_test() {
   let payload = <<2:16, 2:32, col1:bits, 255, 255, 255, 255>>
   let payload_size = bit_array.byte_size(payload) + 4
   let data = <<0x44, payload_size:32-big, payload:bits>>
-  let assert Decoded(DataRow(values: values), <<>>) = message.decode_backend(data)
+  let assert Decoded(DataRow(values: values), <<>>) =
+    message.decode_backend(data)
   let extracted = message.extract_row_values(values)
   should.equal(extracted, [Some(col1), None])
 }
 
 pub fn decode_error_response_test() {
   let payload = <<
-    0x53, "ERROR":utf8, 0,
-    0x43, "42P01":utf8, 0,
-    0x4D, "relation \"foo\" does not exist":utf8, 0,
-    0,
+    0x53, "ERROR":utf8, 0, 0x43, "42P01":utf8, 0, 0x4D,
+    "relation \"foo\" does not exist":utf8, 0, 0,
   >>
   let payload_size = bit_array.byte_size(payload) + 4
   let data = <<0x45, payload_size:32-big, payload:bits>>
@@ -291,9 +327,7 @@ pub fn decode_error_response_test() {
 
 pub fn decode_notice_response_test() {
   let payload = <<
-    0x53, "NOTICE":utf8, 0,
-    0x4D, "test notice":utf8, 0,
-    0x43, "00000":utf8, 0,
+    0x53, "NOTICE":utf8, 0, 0x4D, "test notice":utf8, 0, 0x43, "00000":utf8, 0,
     0,
   >>
   let payload_size = bit_array.byte_size(payload) + 4
@@ -309,9 +343,11 @@ pub fn decode_notification_test() {
   let inner = <<0, 0, 48, 57, "my_channel":utf8, 0, "hello":utf8, 0>>
   let payload_size = bit_array.byte_size(inner) + 4
   let data = <<0x41, payload_size:32-big, inner:bits>>
-  let assert Decoded(NotificationResponse(pg_pid: pid, channel: ch, payload: p), <<>>) =
-    message.decode_backend(data)
-  should.equal(pid, 12345)
+  let assert Decoded(
+    NotificationResponse(pg_pid: pid, channel: ch, payload: p),
+    <<>>,
+  ) = message.decode_backend(data)
+  should.equal(pid, 12_345)
   should.equal(ch, "my_channel")
   should.equal(p, "hello")
 }
@@ -355,7 +391,8 @@ pub fn decode_copy_data_test() {
 }
 
 pub fn decode_copy_done_test() {
-  let assert Decoded(CopyDone, <<>>) = message.decode_backend(<<0x63, 0, 0, 0, 4>>)
+  let assert Decoded(CopyDone, <<>>) =
+    message.decode_backend(<<0x63, 0, 0, 0, 4>>)
 }
 
 // =============================================================================
@@ -373,9 +410,11 @@ pub fn decode_incomplete_partial_payload_test() {
 pub fn decode_remaining_bytes_test() {
   // Two messages in buffer: AuthOk + ReadyForQuery(Idle)
   let data = <<0x52, 0, 0, 0, 8, 0, 0, 0, 0, 0x5A, 0, 0, 0, 5, 0x49>>
-  let assert Decoded(AuthenticationMsg(AuthOk), rest) = message.decode_backend(data)
+  let assert Decoded(AuthenticationMsg(AuthOk), rest) =
+    message.decode_backend(data)
   should.equal(bit_array.byte_size(rest), 6)
-  let assert Decoded(ReadyForQuery(message.Idle), <<>>) = message.decode_backend(rest)
+  let assert Decoded(ReadyForQuery(message.Idle), <<>>) =
+    message.decode_backend(rest)
 }
 
 pub fn decode_empty_buffer_test() {
@@ -418,7 +457,22 @@ pub fn extract_row_values_with_null_test() {
 pub fn extract_row_values_mixed_test() {
   let col1 = <<"hello":utf8>>
   // col1: len=5, data="hello"; col2: NULL; col3: len=2, data="42"
-  let data = <<0, 0, 0, 5, col1:bits, 255, 255, 255, 255, 0, 0, 0, 2, "42":utf8>>
+  let data = <<
+    0,
+    0,
+    0,
+    5,
+    col1:bits,
+    255,
+    255,
+    255,
+    255,
+    0,
+    0,
+    0,
+    2,
+    "42":utf8,
+  >>
   let result = message.extract_row_values(data)
   should.equal(result, [Some(col1), None, Some(<<"42":utf8>>)])
 }

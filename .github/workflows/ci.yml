@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Build, test, and docs
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Configure PostgreSQL for replication tests
+        run: |
+          docker exec "${{ job.services.postgres.id }}" bash -lc "cat >> /var/lib/postgresql/data/postgresql.conf <<'EOF'
+          wal_level = logical
+          max_wal_senders = 10
+          max_replication_slots = 10
+          password_encryption = 'scram-sha-256'
+          EOF"
+          docker restart "${{ job.services.postgres.id }}"
+          until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"; do sleep 1; done
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          gleam-version: "1.14.0"
+
+      - name: Install dependencies
+        run: gleam deps download
+
+      - name: Check formatting
+        run: make format-check
+
+      - name: Set up test database
+        run: psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -f test/setup.sql
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test
+
+      - name: Build docs
+        run: make docs
+
+  smoke:
+    name: Smoke test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          gleam-version: "1.14.0"
+
+      - name: Install PostgreSQL client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Run smoke script
+        run: ./scripts/smoke_test.sh

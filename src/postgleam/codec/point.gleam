@@ -1,8 +1,9 @@
 /// PostgreSQL point codec - binary format
 /// Wire: 16 bytes = float64 x + float64 y
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Point}
 
 pub const oid = 600
@@ -18,7 +19,13 @@ pub fn matcher() -> CodecMatcher {
 }
 
 fn build(type_oid: Int) -> Codec {
-  Codec(type_name: "point", oid: type_oid, format: Binary, encode: encode, decode: decode)
+  Codec(
+    type_name: "point",
+    oid: type_oid,
+    format: Binary,
+    encode: encode,
+    decode: decode,
+  )
 }
 
 pub fn encode(val: Value) -> Result(BitArray, String) {

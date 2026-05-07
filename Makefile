@@ -1,10 +1,27 @@
-.PHONY: build test push tag publish release bench bench-pure bench-integration bench-realworld bench-compare
+.PHONY: build test test-setup smoke format format-check docs check push tag publish release bench bench-pure bench-integration bench-realworld bench-compare
 
 build:
 	gleam build
 
 test:
 	gleam test
+
+test-setup:
+	./scripts/setup_test_db.sh
+
+smoke:
+	./scripts/smoke_test.sh
+
+format:
+	gleam format src test
+
+format-check:
+	gleam format --check src test
+
+docs:
+	gleam docs build
+
+check: format-check build test docs
 
 push:
 	sh scripts/push.sh

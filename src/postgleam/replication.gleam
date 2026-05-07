@@ -1,7 +1,6 @@
 /// PostgreSQL logical replication connection support.
 /// Provides LSN encoding/decoding and a replication connection that can
 /// create replication slots, start streaming, and receive WAL data.
-
 import gleam/option.{None}
 import gleam/result
 import gleam/string
@@ -18,12 +17,7 @@ pub type Lsn {
 /// A WAL data message from PostgreSQL
 pub type WalMessage {
   /// XLogData: WAL start, WAL end, server timestamp, and data payload
-  XLogData(
-    wal_start: Int,
-    wal_end: Int,
-    server_time: Int,
-    data: BitArray,
-  )
+  XLogData(wal_start: Int, wal_end: Int, server_time: Int, data: BitArray)
   /// Primary keepalive: WAL end, server timestamp, reply requested flag
   PrimaryKeepalive(wal_end: Int, server_time: Int, reply_requested: Bool)
 }
@@ -64,17 +58,12 @@ pub fn decode_lsn(lsn: String) -> Result(Int, Nil) {
 }
 
 /// Start a replication connection by connecting with the replication parameter
-pub fn connect(
-  config cfg: Config,
-) -> Result(ConnectionState, Error) {
+pub fn connect(config cfg: Config) -> Result(ConnectionState, Error) {
   let repl_config =
-    Config(
-      ..cfg,
-      extra_parameters: [
-        #("replication", "database"),
-        ..cfg.extra_parameters
-      ],
-    )
+    Config(..cfg, extra_parameters: [
+      #("replication", "database"),
+      ..cfg.extra_parameters
+    ])
   connection.connect(repl_config)
 }
 
@@ -95,9 +84,10 @@ pub fn start_streaming(
   sql: String,
   timeout: Int,
 ) -> Result(ConnectionState, Error) {
-  use state <- result.try(
-    connection.send_message(state, message.SimpleQuery(sql)),
-  )
+  use state <- result.try(connection.send_message(
+    state,
+    message.SimpleQuery(sql),
+  ))
   recv_copy_both_response(state, timeout)
 }
 
@@ -145,15 +135,14 @@ pub fn send_standby_status(
     True -> 1
     False -> 0
   }
-  let data =
-    <<
-      "r":utf8,
-      written:size(64),
-      flushed:size(64),
-      applied:size(64),
-      timestamp:size(64),
-      reply_byte:size(8),
-    >>
+  let data = <<
+    "r":utf8,
+    written:size(64),
+    flushed:size(64),
+    applied:size(64),
+    timestamp:size(64),
+    reply_byte:size(8),
+  >>
   connection.send_message(state, message.CopyDataMsg(data))
 }
 
@@ -162,9 +151,7 @@ pub fn stop_streaming(
   state: ConnectionState,
   timeout: Int,
 ) -> Result(ConnectionState, Error) {
-  use state <- result.try(
-    connection.send_message(state, message.CopyDoneMsg),
-  )
+  use state <- result.try(connection.send_message(state, message.CopyDoneMsg))
   recv_stream_end(state, timeout)
 }
 
@@ -231,8 +218,13 @@ fn recv_ready_after_stream(
 fn parse_wal_message(data: BitArray) -> Result(WalMessage, Nil) {
   case data {
     // 'w' - XLogData
-    <<0x77, wal_start:size(64), wal_end:size(64), server_time:size(64),
-      rest:bytes>> ->
+    <<
+      0x77,
+      wal_start:size(64),
+      wal_end:size(64),
+      server_time:size(64),
+      rest:bytes,
+    >> ->
       Ok(XLogData(
         wal_start: wal_start,
         wal_end: wal_end,

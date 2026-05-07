@@ -1,6 +1,5 @@
 /// Transport abstraction over TCP (mug) and SSL sockets.
 /// Allows the connection module to work transparently with either.
-
 import gleam/result
 import mug
 import postgleam/error.{type Error}
@@ -31,10 +30,7 @@ pub fn send(transport: Transport, data: BitArray) -> Result(Nil, Error) {
 }
 
 /// Receive bytes from the transport
-pub fn receive(
-  transport: Transport,
-  timeout: Int,
-) -> Result(BitArray, Error) {
+pub fn receive(transport: Transport, timeout: Int) -> Result(BitArray, Error) {
   case transport {
     Tcp(socket) ->
       mug.receive(socket, timeout_milliseconds: timeout)
@@ -94,10 +90,8 @@ pub fn upgrade_to_ssl(
               Error(error.SocketError("SSL upgrade failed: " <> reason))
           }
         }
-        Ok(<<0x4E>>) ->
-          Error(error.SocketError("Server does not support SSL"))
-        Ok(_) ->
-          Error(error.SocketError("Unexpected SSL negotiation response"))
+        Ok(<<0x4E>>) -> Error(error.SocketError("Server does not support SSL"))
+        Ok(_) -> Error(error.SocketError("Unexpected SSL negotiation response"))
       }
     }
   }

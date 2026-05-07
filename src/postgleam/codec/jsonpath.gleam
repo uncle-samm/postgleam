@@ -1,9 +1,10 @@
 /// PostgreSQL jsonpath codec - binary format
 /// Wire: 1 byte version (0x01) + UTF-8 string
-
 import gleam/bit_array
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Jsonpath}
 
 pub const oid = 4072

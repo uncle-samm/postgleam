@@ -1,6 +1,6 @@
 /// Codec encode/decode benchmarks — the inner loop of every query.
-
 import bench/runner.{type BenchmarkResult}
+import gleam/int
 import gleam/list
 import gleam/option.{Some}
 import gleam/string
@@ -170,8 +170,24 @@ fn bench_text_decode_1kb() -> bench.BenchResults {
 }
 
 fn bench_uuid_encode() -> bench.BenchResults {
-  let uuid_bytes = <<0x55, 0x0E, 0x84, 0x00, 0xE2, 0x9B, 0x41, 0xD4, 0xA7,
-    0x16, 0x44, 0x66, 0x55, 0x44, 0x00, 0x00>>
+  let uuid_bytes = <<
+    0x55,
+    0x0E,
+    0x84,
+    0x00,
+    0xE2,
+    0x9B,
+    0x41,
+    0xD4,
+    0xA7,
+    0x16,
+    0x44,
+    0x66,
+    0x55,
+    0x44,
+    0x00,
+    0x00,
+  >>
   bench.run(
     [bench.Input("16_bytes", value.Uuid(uuid_bytes))],
     [bench.Function("uuid.encode", fn(v) { uuid_codec.encode(v) })],
@@ -180,8 +196,24 @@ fn bench_uuid_encode() -> bench.BenchResults {
 }
 
 fn bench_uuid_decode() -> bench.BenchResults {
-  let uuid_bytes = <<0x55, 0x0E, 0x84, 0x00, 0xE2, 0x9B, 0x41, 0xD4, 0xA7,
-    0x16, 0x44, 0x66, 0x55, 0x44, 0x00, 0x00>>
+  let uuid_bytes = <<
+    0x55,
+    0x0E,
+    0x84,
+    0x00,
+    0xE2,
+    0x9B,
+    0x41,
+    0xD4,
+    0xA7,
+    0x16,
+    0x44,
+    0x66,
+    0x55,
+    0x44,
+    0x00,
+    0x00,
+  >>
   bench.run(
     [bench.Input("16_bytes", uuid_bytes)],
     [bench.Function("uuid.decode", fn(d) { uuid_codec.decode(d) })],
@@ -299,7 +331,13 @@ fn bench_circle_encode() -> bench.BenchResults {
 
 fn bench_circle_decode() -> bench.BenchResults {
   bench.run(
-    [bench.Input("24_bytes", <<1.0:float-64-big, 2.0:float-64-big, 5.0:float-64-big>>)],
+    [
+      bench.Input("24_bytes", <<
+        1.0:float-64-big,
+        2.0:float-64-big,
+        5.0:float-64-big,
+      >>),
+    ],
     [bench.Function("circle.decode", fn(d) { circle_codec.decode(d) })],
     [bench.Duration(duration), bench.Warmup(warmup)],
   )
@@ -367,8 +405,8 @@ fn build_text_array_codec() -> codec.Codec {
 fn bench_array_int4_encode() -> bench.BenchResults {
   let c = build_int4_array_codec()
   let elements =
-    list.range(1, 100)
-    |> list.map(fn(n) { Some(value.Integer(n)) })
+    int.range(1, 100, [], fn(acc, n) { [Some(value.Integer(n)), ..acc] })
+    |> list.reverse
   bench.run(
     [bench.Input("100_elements", value.Array(elements))],
     [bench.Function("array_int4.encode", fn(v) { c.encode(v) })],
@@ -379,8 +417,8 @@ fn bench_array_int4_encode() -> bench.BenchResults {
 fn bench_array_int4_decode() -> bench.BenchResults {
   let c = build_int4_array_codec()
   let elements =
-    list.range(1, 100)
-    |> list.map(fn(n) { Some(value.Integer(n)) })
+    int.range(1, 100, [], fn(acc, n) { [Some(value.Integer(n)), ..acc] })
+    |> list.reverse
   let assert Ok(encoded) = c.encode(value.Array(elements))
   bench.run(
     [bench.Input("100_elements", encoded)],
@@ -392,8 +430,8 @@ fn bench_array_int4_decode() -> bench.BenchResults {
 fn bench_array_text_encode() -> bench.BenchResults {
   let c = build_text_array_codec()
   let elements =
-    list.range(1, 10)
-    |> list.map(fn(_) { Some(value.Text("hello world")) })
+    int.range(1, 10, [], fn(acc, _) { [Some(value.Text("hello world")), ..acc] })
+    |> list.reverse
   bench.run(
     [bench.Input("10_elements", value.Array(elements))],
     [bench.Function("array_text.encode", fn(v) { c.encode(v) })],
@@ -404,8 +442,8 @@ fn bench_array_text_encode() -> bench.BenchResults {
 fn bench_array_text_decode() -> bench.BenchResults {
   let c = build_text_array_codec()
   let elements =
-    list.range(1, 10)
-    |> list.map(fn(_) { Some(value.Text("hello world")) })
+    int.range(1, 10, [], fn(acc, _) { [Some(value.Text("hello world")), ..acc] })
+    |> list.reverse
   let assert Ok(encoded) = c.encode(value.Array(elements))
   bench.run(
     [bench.Input("10_elements", encoded)],

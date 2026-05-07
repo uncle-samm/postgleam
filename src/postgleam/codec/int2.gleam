@@ -1,8 +1,9 @@
 /// PostgreSQL int2 (smallint) codec - binary format
 /// Wire: 2 bytes signed big-endian
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Integer}
 
 /// OID for int2

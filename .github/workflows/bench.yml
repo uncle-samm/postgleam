@@ -1,0 +1,29 @@
+name: Benchmarks
+
+on:
+  workflow_dispatch:
+
+jobs:
+  pure:
+    name: Pure benchmarks
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          gleam-version: "1.14.0"
+
+      - name: Install dependencies
+        run: gleam deps download
+
+      - name: Run pure benchmarks
+        run: make bench-pure
+
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v4
+        with:
+          name: pure-benchmark-results
+          path: bench/results/pure*.json

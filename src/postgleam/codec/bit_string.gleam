@@ -1,8 +1,9 @@
 /// PostgreSQL bit/varbit codec - binary format
 /// Wire: 4-byte uint32 bit_count + ceil(bit_count/8) bytes of data
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value}
 
 pub const bit_oid = 1560

@@ -1,8 +1,9 @@
 /// PostgreSQL void codec - binary format
 /// Wire: 0 bytes (empty payload)
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Void}
 
 /// OID for void

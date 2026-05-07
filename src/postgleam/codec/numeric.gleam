@@ -3,10 +3,11 @@
 /// Special: NaN = sign 0xC000, +Inf = sign 0xD000, -Inf = sign 0xF000
 ///
 /// We represent numeric as a string to preserve arbitrary precision.
-
 import gleam/bit_array
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, NaN, NegInfinity, Numeric, PosInfinity}
 
 pub const oid = 1700
@@ -22,7 +23,13 @@ pub fn matcher() -> CodecMatcher {
 }
 
 fn build(type_oid: Int) -> Codec {
-  Codec(type_name: "numeric", oid: type_oid, format: Binary, encode: encode, decode: decode)
+  Codec(
+    type_name: "numeric",
+    oid: type_oid,
+    format: Binary,
+    encode: encode,
+    decode: decode,
+  )
 }
 
 pub fn encode(val: Value) -> Result(BitArray, String) {
@@ -31,7 +38,8 @@ pub fn encode(val: Value) -> Result(BitArray, String) {
     PosInfinity -> Ok(<<0:16, 0:16, 0xD000:16, 0:16>>)
     NegInfinity -> Ok(<<0:16, 0:16, 0xF000:16, 0:16>>)
     Numeric(s) -> encode_numeric_string(s)
-    _ -> Error("numeric codec: expected Numeric, NaN, PosInfinity, or NegInfinity")
+    _ ->
+      Error("numeric codec: expected Numeric, NaN, PosInfinity, or NegInfinity")
   }
 }
 

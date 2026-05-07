@@ -15,7 +15,11 @@ pub fn copy_in_test() {
 
   // Create temp table
   let assert Ok(#(_, state)) =
-    connection.simple_query(state, "CREATE TEMP TABLE _copy_test (id int, name text)", cfg.timeout)
+    connection.simple_query(
+      state,
+      "CREATE TEMP TABLE _copy_test (id int, name text)",
+      cfg.timeout,
+    )
 
   // COPY IN data
   let data = [
@@ -30,7 +34,11 @@ pub fn copy_in_test() {
 
   // Verify
   let assert Ok(#(results, state)) =
-    connection.simple_query(state, "SELECT count(*) FROM _copy_test", cfg.timeout)
+    connection.simple_query(
+      state,
+      "SELECT count(*) FROM _copy_test",
+      cfg.timeout,
+    )
   let assert [result] = results
   should.equal(result.rows, [[Some("3")]])
 
@@ -43,9 +51,17 @@ pub fn copy_out_test() {
 
   // Create and populate temp table
   let assert Ok(#(_, state)) =
-    connection.simple_query(state, "CREATE TEMP TABLE _copy_out_test (id int, name text)", cfg.timeout)
+    connection.simple_query(
+      state,
+      "CREATE TEMP TABLE _copy_out_test (id int, name text)",
+      cfg.timeout,
+    )
   let assert Ok(#(_, state)) =
-    connection.simple_query(state, "INSERT INTO _copy_out_test VALUES (1, 'Alice'), (2, 'Bob')", cfg.timeout)
+    connection.simple_query(
+      state,
+      "INSERT INTO _copy_out_test VALUES (1, 'Alice'), (2, 'Bob')",
+      cfg.timeout,
+    )
 
   // COPY OUT
   let assert Ok(#(rows, state)) =
@@ -62,7 +78,11 @@ pub fn copy_in_empty_test() {
   let assert Ok(state) = connection.connect(cfg)
 
   let assert Ok(#(_, state)) =
-    connection.simple_query(state, "CREATE TEMP TABLE _copy_empty (id int)", cfg.timeout)
+    connection.simple_query(
+      state,
+      "CREATE TEMP TABLE _copy_empty (id int)",
+      cfg.timeout,
+    )
 
   let assert Ok(#(tag, state)) =
     copy.copy_in(state, "COPY _copy_empty FROM STDIN", [], cfg.timeout)

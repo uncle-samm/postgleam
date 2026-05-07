@@ -161,7 +161,11 @@ pub fn extended_query_multiple_columns_test() {
     )
 
   should.equal(result.rows, [
-    [Some(value.Integer(1)), Some(value.Text("hello")), Some(value.Boolean(True))],
+    [
+      Some(value.Integer(1)),
+      Some(value.Text("hello")),
+      Some(value.Boolean(True)),
+    ],
   ])
   connection.disconnect(state)
 }
@@ -322,7 +326,13 @@ pub fn prepare_and_execute_test() {
 
   // Prepare a named statement
   let assert Ok(#(prepared, state)) =
-    connection.prepare(state, "test_stmt", "SELECT $1::int4 AS val", [], cfg.timeout)
+    connection.prepare(
+      state,
+      "test_stmt",
+      "SELECT $1::int4 AS val",
+      [],
+      cfg.timeout,
+    )
 
   // Should have 1 param OID (int4 = 23)
   should.equal(prepared.param_oids, [23])
@@ -332,13 +342,25 @@ pub fn prepare_and_execute_test() {
 
   // Execute it
   let assert Ok(#(result, state)) =
-    connection.execute_prepared(state, prepared, [Some(value.Integer(42))], reg, cfg.timeout)
+    connection.execute_prepared(
+      state,
+      prepared,
+      [Some(value.Integer(42))],
+      reg,
+      cfg.timeout,
+    )
 
   should.equal(result.rows, [[Some(value.Integer(42))]])
 
   // Execute again with different param
   let assert Ok(#(result2, state)) =
-    connection.execute_prepared(state, prepared, [Some(value.Integer(99))], reg, cfg.timeout)
+    connection.execute_prepared(
+      state,
+      prepared,
+      [Some(value.Integer(99))],
+      reg,
+      cfg.timeout,
+    )
 
   should.equal(result2.rows, [[Some(value.Integer(99))]])
 
@@ -406,7 +428,13 @@ pub fn extended_query_sequential_test() {
   let assert Ok(#(_, state)) =
     connection.extended_query(state, "SELECT 2::int4", [], reg, cfg.timeout)
   let assert Ok(#(result, state)) =
-    connection.extended_query(state, "SELECT 3::int4 AS val", [], reg, cfg.timeout)
+    connection.extended_query(
+      state,
+      "SELECT 3::int4 AS val",
+      [],
+      reg,
+      cfg.timeout,
+    )
 
   should.equal(result.rows, [[Some(value.Integer(3))]])
   connection.disconnect(state)
@@ -421,11 +449,11 @@ pub fn extended_query_oid_type_test() {
     connection.extended_query(
       state,
       "SELECT $1::oid AS val",
-      [Some(value.Oid(12345))],
+      [Some(value.Oid(12_345))],
       reg,
       cfg.timeout,
     )
 
-  should.equal(result.rows, [[Some(value.Oid(12345))]])
+  should.equal(result.rows, [[Some(value.Oid(12_345))]])
   connection.disconnect(state)
 }

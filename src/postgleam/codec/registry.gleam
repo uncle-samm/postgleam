@@ -1,6 +1,5 @@
 /// Codec registry - maps PostgreSQL OIDs to codecs for encode/decode dispatch.
 /// Built at connection bootstrap time from the default matcher list.
-
 import gleam/dict.{type Dict}
 import gleam/option.{Some}
 import postgleam/codec.{type Codec, type CodecMatcher}
@@ -65,11 +64,7 @@ pub fn find_by_send(
 }
 
 /// Register a single OID with a specific matcher's build function
-pub fn register(
-  registry: Registry,
-  oid: Int,
-  matcher: CodecMatcher,
-) -> Registry {
+pub fn register(registry: Registry, oid: Int, matcher: CodecMatcher) -> Registry {
   let codec = { matcher.build }(oid)
   dict.insert(registry, oid, codec)
 }

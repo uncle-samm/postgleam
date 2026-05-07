@@ -1,5 +1,4 @@
 /// Integration benchmarks — live database operations (requires Docker PostgreSQL).
-
 import bench/runner.{type BenchmarkResult}
 import gleam/int
 import gleam/io
@@ -62,9 +61,7 @@ fn bench_connect_disconnect(cfg: config.Config) -> bench.BenchResults {
   )
 }
 
-fn bench_simple_query_select_1(
-  conn: postgleam.Connection,
-) -> bench.BenchResults {
+fn bench_simple_query_select_1(conn: postgleam.Connection) -> bench.BenchResults {
   bench.run(
     [bench.Input("select_1", conn)],
     [
@@ -97,11 +94,7 @@ fn bench_query_1000_rows(conn: postgleam.Connection) -> bench.BenchResults {
     [
       bench.Function("query", fn(c) {
         let assert Ok(_) =
-          postgleam.query(
-            c,
-            "SELECT generate_series(1,1000)::int4",
-            [],
-          )
+          postgleam.query(c, "SELECT generate_series(1,1000)::int4", [])
         Nil
       }),
     ],
@@ -150,17 +143,14 @@ fn bench_query_with_decoder(conn: postgleam.Connection) -> bench.BenchResults {
   )
 }
 
-fn bench_prepare_execute_close(
-  conn: postgleam.Connection,
-) -> bench.BenchResults {
+fn bench_prepare_execute_close(conn: postgleam.Connection) -> bench.BenchResults {
   bench.run(
     [bench.Input("lifecycle", conn)],
     [
       bench.Function("prepare+execute+close", fn(c) {
         let assert Ok(stmt) =
           postgleam.prepare(c, "bench_stmt", "SELECT $1::int4")
-        let assert Ok(_) =
-          postgleam.execute(c, stmt, [Some(value.Integer(1))])
+        let assert Ok(_) = postgleam.execute(c, stmt, [Some(value.Integer(1))])
         let assert Ok(_) = postgleam.close(c, "bench_stmt")
         Nil
       }),

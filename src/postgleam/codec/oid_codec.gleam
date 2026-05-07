@@ -1,9 +1,10 @@
 /// PostgreSQL OID codec - binary format
 /// Wire: 4 bytes unsigned big-endian
 /// Handles: oid, regclass, regtype, regproc, xid, cid, etc.
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Oid}
 
 /// OIDs for OID-like types

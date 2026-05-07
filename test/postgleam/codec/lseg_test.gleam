@@ -4,10 +4,12 @@ import postgleam/value
 
 pub fn lseg_encode_test() {
   let assert Ok(encoded) = lseg.encode(value.Lseg(0.0, 0.0, 1.0, 1.0))
-  should.equal(
-    encoded,
-    <<0.0:float-64-big, 0.0:float-64-big, 1.0:float-64-big, 1.0:float-64-big>>,
-  )
+  should.equal(encoded, <<
+    0.0:float-64-big,
+    0.0:float-64-big,
+    1.0:float-64-big,
+    1.0:float-64-big,
+  >>)
 }
 
 pub fn lseg_decode_test() {

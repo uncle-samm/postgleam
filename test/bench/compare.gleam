@@ -1,7 +1,7 @@
 /// Compares two benchmark JSON result files and prints a delta table.
-
-import bench/runner.{type BenchReport, type BenchmarkResult, BenchReport,
-  BenchmarkResult}
+import bench/runner.{
+  type BenchReport, type BenchmarkResult, BenchReport, BenchmarkResult,
+}
 import gleam/dynamic/decode
 import gleam/float
 import gleam/int
@@ -56,10 +56,7 @@ fn result_decoder() -> decode.Decoder(BenchmarkResult) {
 fn print_comparison(baseline: BenchReport, current: BenchReport) -> Nil {
   io.println("")
   io.println(
-    "Benchmark Comparison: "
-    <> baseline.commit
-    <> " -> "
-    <> current.commit,
+    "Benchmark Comparison: " <> baseline.commit <> " -> " <> current.commit,
   )
   io.println(string.repeat("=", 80))
   io.println(

@@ -1,9 +1,10 @@
 /// PostgreSQL xml codec - binary format
 /// Wire: UTF-8 bytes
-
 import gleam/bit_array
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Xml}
 
 pub const oid = 142

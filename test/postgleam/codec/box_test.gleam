@@ -4,10 +4,12 @@ import postgleam/value
 
 pub fn box_encode_test() {
   let assert Ok(encoded) = box.encode(value.Box(1.0, 1.0, 0.0, 0.0))
-  should.equal(
-    encoded,
-    <<1.0:float-64-big, 1.0:float-64-big, 0.0:float-64-big, 0.0:float-64-big>>,
-  )
+  should.equal(encoded, <<
+    1.0:float-64-big,
+    1.0:float-64-big,
+    0.0:float-64-big,
+    0.0:float-64-big,
+  >>)
 }
 
 pub fn box_decode_test() {

@@ -1,9 +1,10 @@
 /// PostgreSQL float4 (real) codec - binary format
 /// Wire: 4 bytes IEEE 754 single-precision
 /// Special values: NaN, +Infinity, -Infinity
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Float, NaN, NegInfinity, PosInfinity}
 
 /// OID for float4

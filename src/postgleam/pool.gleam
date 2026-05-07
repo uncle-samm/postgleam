@@ -1,7 +1,6 @@
 /// Connection pool - manages multiple PostgreSQL connections.
 /// Features: round-robin checkout, health checks, automatic reconnection,
 /// wait queue, and PgBouncer compatibility.
-
 import gleam/erlang/process.{type Subject}
 import gleam/int
 import gleam/list
@@ -219,8 +218,7 @@ fn handle_message(
           case is_dead {
             True -> {
               let slots = set_slot(state.slots, index, Reconnecting(0))
-              let _ =
-                process.send_after(state.self, 0, Reconnect(index))
+              let _ = process.send_after(state.self, 0, Reconnect(index))
               actor.continue(PoolState(..state, slots: slots))
             }
             False -> {
@@ -248,8 +246,7 @@ fn handle_message(
           case is_dead {
             True -> {
               let slots = set_slot(state.slots, index, Reconnecting(0))
-              let _ =
-                process.send_after(state.self, 0, Reconnect(index))
+              let _ = process.send_after(state.self, 0, Reconnect(index))
               actor.continue(PoolState(..state, slots: slots))
             }
             False -> {
@@ -261,11 +258,7 @@ fn handle_message(
         Error(_) -> {
           let now = monotonic_time_ms()
           let req =
-            QueuedSimp(QueuedSimple(
-              fun: fun,
-              reply: reply,
-              enqueued_at: now,
-            ))
+            QueuedSimp(QueuedSimple(fun: fun, reply: reply, enqueued_at: now))
           actor.continue(PoolState(..state, queue: append(state.queue, [req])))
         }
       }
@@ -278,11 +271,7 @@ fn handle_message(
       let state = expire_queue(state)
       // Schedule next health check
       let _ =
-        process.send_after(
-          state.self,
-          state.config.idle_interval,
-          HealthCheck,
-        )
+        process.send_after(state.self, state.config.idle_interval, HealthCheck)
       actor.continue(state)
     }
 
@@ -302,10 +291,8 @@ fn handle_message(
             }
             Error(_) -> {
               // Exponential backoff: 1s, 2s, 4s, 8s, ... max 30s
-              let delay =
-                int.min(30_000, pow2(attempts) * 1000)
-              let _ =
-                process.send_after(state.self, delay, Reconnect(index))
+              let delay = int.min(30_000, pow2(attempts) * 1000)
+              let _ = process.send_after(state.self, delay, Reconnect(index))
               let slots =
                 set_slot(state.slots, index, Reconnecting(attempts + 1))
               actor.continue(PoolState(..state, slots: slots))
@@ -342,7 +329,10 @@ fn find_available(
   }
 }
 
-fn get_slot(slots: List(ConnectionSlot), index: Int) -> Result(ConnectionSlot, Nil) {
+fn get_slot(
+  slots: List(ConnectionSlot),
+  index: Int,
+) -> Result(ConnectionSlot, Nil) {
   case slots, index {
     [], _ -> Error(Nil)
     [slot, ..], 0 -> Ok(slot)
@@ -381,19 +371,12 @@ fn health_check_slots(
           health_check_slots(state, rest, index + 1, [Active(conn), ..acc])
         Error(_) -> {
           // Dead — schedule reconnect
-          let _ =
-            process.send_after(state.self, 0, Reconnect(index))
-          health_check_slots(
-            state,
-            rest,
-            index + 1,
-            [Reconnecting(0), ..acc],
-          )
+          let _ = process.send_after(state.self, 0, Reconnect(index))
+          health_check_slots(state, rest, index + 1, [Reconnecting(0), ..acc])
         }
       }
     }
-    [slot, ..rest] ->
-      health_check_slots(state, rest, index + 1, [slot, ..acc])
+    [slot, ..rest] -> health_check_slots(state, rest, index + 1, [slot, ..acc])
   }
 }
 
@@ -443,8 +426,7 @@ fn drain_queue(state: PoolState) -> PoolState {
                   process.send(req.reply, result)
                   case is_dead {
                     True -> {
-                      let slots =
-                        set_slot(state.slots, index, Reconnecting(0))
+                      let slots = set_slot(state.slots, index, Reconnecting(0))
                       let _ =
                         process.send_after(state.self, 0, Reconnect(index))
                       drain_queue(PoolState(..state, slots: slots, queue: rest))
@@ -474,8 +456,7 @@ fn drain_queue(state: PoolState) -> PoolState {
                   process.send(req.reply, result)
                   case is_dead {
                     True -> {
-                      let slots =
-                        set_slot(state.slots, index, Reconnecting(0))
+                      let slots = set_slot(state.slots, index, Reconnecting(0))
                       let _ =
                         process.send_after(state.self, 0, Reconnect(index))
                       drain_queue(PoolState(..state, slots: slots, queue: rest))
@@ -594,7 +575,11 @@ pub fn query(
         let result = case config.pgbouncer {
           True ->
             connection.extended_query_unnamed(
-              conn, sql, params, reg, config.timeout,
+              conn,
+              sql,
+              params,
+              reg,
+              config.timeout,
             )
           False ->
             connection.extended_query(conn, sql, params, reg, config.timeout)

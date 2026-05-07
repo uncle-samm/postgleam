@@ -50,7 +50,11 @@ pub fn connect_and_simple_query_multiple_columns_test() {
     |> config.database("postgleam_test")
   let assert Ok(state) = connection.connect(cfg)
   let assert Ok(#(results, state)) =
-    connection.simple_query(state, "SELECT 1 AS a, 'hello' AS b, true AS c", cfg.timeout)
+    connection.simple_query(
+      state,
+      "SELECT 1 AS a, 'hello' AS b, true AS c",
+      cfg.timeout,
+    )
   let assert [result] = results
   should.equal(result.columns, ["a", "b", "c"])
   should.equal(result.rows, [[Some("1"), Some("hello"), Some("t")]])
@@ -63,7 +67,11 @@ pub fn connect_and_simple_query_multiple_rows_test() {
     |> config.database("postgleam_test")
   let assert Ok(state) = connection.connect(cfg)
   let assert Ok(#(results, state)) =
-    connection.simple_query(state, "SELECT generate_series(1,3) AS n", cfg.timeout)
+    connection.simple_query(
+      state,
+      "SELECT generate_series(1,3) AS n",
+      cfg.timeout,
+    )
   let assert [result] = results
   should.equal(result.rows, [[Some("1")], [Some("2")], [Some("3")]])
   connection.disconnect(state)
@@ -75,7 +83,11 @@ pub fn connect_and_simple_query_error_test() {
     |> config.database("postgleam_test")
   let assert Ok(state) = connection.connect(cfg)
   let assert Error(_) =
-    connection.simple_query(state, "SELECT * FROM nonexistent_table_xyz", cfg.timeout)
+    connection.simple_query(
+      state,
+      "SELECT * FROM nonexistent_table_xyz",
+      cfg.timeout,
+    )
 }
 
 pub fn connect_wrong_password_test() {

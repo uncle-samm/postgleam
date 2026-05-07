@@ -1,8 +1,9 @@
 /// PostgreSQL bool codec - binary format
 /// Wire: 1 byte (0x01 = true, 0x00 = false)
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Boolean}
 
 /// OID for bool

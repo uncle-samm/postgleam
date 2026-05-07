@@ -4,13 +4,13 @@ import postgleam/value
 
 pub fn money_encode_test() {
   // 12345 as int64 big-endian
-  money.encode(value.Money(12345))
+  money.encode(value.Money(12_345))
   |> should.equal(Ok(<<0, 0, 0, 0, 0, 0, 48, 57>>))
 }
 
 pub fn money_decode_test() {
   money.decode(<<0, 0, 0, 0, 0, 0, 48, 57>>)
-  |> should.equal(Ok(value.Money(12345)))
+  |> should.equal(Ok(value.Money(12_345)))
 }
 
 pub fn money_zero_roundtrip_test() {

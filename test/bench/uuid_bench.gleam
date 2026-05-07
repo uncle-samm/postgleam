@@ -1,5 +1,4 @@
 /// UUID string parsing/formatting benchmarks — pure Gleam hot paths.
-
 import bench/runner.{type BenchmarkResult}
 import gleam/list
 import gleamy/bench
@@ -37,8 +36,24 @@ fn bench_from_string_no_dashes() -> bench.BenchResults {
 
 fn bench_to_string() -> bench.BenchResults {
   let uuid_val =
-    value.Uuid(<<0x55, 0x0E, 0x84, 0x00, 0xE2, 0x9B, 0x41, 0xD4, 0xA7, 0x16,
-      0x44, 0x66, 0x55, 0x44, 0x00, 0x00>>)
+    value.Uuid(<<
+      0x55,
+      0x0E,
+      0x84,
+      0x00,
+      0xE2,
+      0x9B,
+      0x41,
+      0xD4,
+      0xA7,
+      0x16,
+      0x44,
+      0x66,
+      0x55,
+      0x44,
+      0x00,
+      0x00,
+    >>)
   bench.run(
     [bench.Input("16_bytes", uuid_val)],
     [bench.Function("uuid_to_string", fn(v) { value.uuid_to_string(v) })],

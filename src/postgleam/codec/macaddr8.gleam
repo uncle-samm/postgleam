@@ -1,9 +1,10 @@
 /// PostgreSQL macaddr8 codec - binary format
 /// Wire: 8 bytes (EUI-64)
-
 import gleam/bit_array
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Macaddr8}
 
 pub const oid = 774

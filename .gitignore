@@ -2,3 +2,6 @@
 erl_crash.dump
 reference/
 .hex_api_key
+.env
+.env.*
+*.dump

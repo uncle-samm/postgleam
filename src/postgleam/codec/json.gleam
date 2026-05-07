@@ -1,9 +1,10 @@
 /// PostgreSQL json codec - binary format
 /// Wire: raw UTF-8 JSON string (no prefix)
-
 import gleam/bit_array
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Json}
 
 pub const oid = 114
@@ -19,7 +20,13 @@ pub fn matcher() -> CodecMatcher {
 }
 
 fn build(type_oid: Int) -> Codec {
-  Codec(type_name: "json", oid: type_oid, format: Binary, encode: encode, decode: decode)
+  Codec(
+    type_name: "json",
+    oid: type_oid,
+    format: Binary,
+    encode: encode,
+    decode: decode,
+  )
 }
 
 pub fn encode(val: Value) -> Result(BitArray, String) {

@@ -1,9 +1,10 @@
 /// PostgreSQL name codec - binary format
 /// Wire: variable length UTF-8, max 63 bytes
-
 import gleam/bit_array
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Text}
 
 /// OID for name

@@ -1,8 +1,9 @@
 /// PostgreSQL money codec - binary format
 /// Wire: 8 bytes signed int64 big-endian
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, Money}
 
 pub const oid = 790

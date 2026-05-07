@@ -11,8 +11,10 @@ pub fn listen_unlisten_test() {
   let cfg = test_config()
   let assert Ok(state) = connection.connect(cfg)
 
-  let assert Ok(state) = notifications.listen(state, "test_channel", cfg.timeout)
-  let assert Ok(state) = notifications.unlisten(state, "test_channel", cfg.timeout)
+  let assert Ok(state) =
+    notifications.listen(state, "test_channel", cfg.timeout)
+  let assert Ok(state) =
+    notifications.unlisten(state, "test_channel", cfg.timeout)
 
   connection.disconnect(state)
 }
@@ -22,7 +24,35 @@ pub fn notify_test() {
   let assert Ok(state) = connection.connect(cfg)
 
   let assert Ok(state) = notifications.listen(state, "test_chan", cfg.timeout)
-  let assert Ok(state) = notifications.notify(state, "test_chan", "hello", cfg.timeout)
+  let assert Ok(state) =
+    notifications.notify(state, "test_chan", "hello", cfg.timeout)
+
+  connection.disconnect(state)
+}
+
+pub fn notify_escapes_literals_test() {
+  let cfg = test_config()
+  let assert Ok(state) = connection.connect(cfg)
+
+  let assert Ok(state) =
+    notifications.notify(
+      state,
+      "chan'nel",
+      "payload'); SELECT 'nope",
+      cfg.timeout,
+    )
+
+  connection.disconnect(state)
+}
+
+pub fn listen_escapes_identifiers_test() {
+  let cfg = test_config()
+  let assert Ok(state) = connection.connect(cfg)
+
+  let assert Ok(state) =
+    notifications.listen(state, "test\"channel", cfg.timeout)
+  let assert Ok(state) =
+    notifications.unlisten(state, "test\"channel", cfg.timeout)
 
   connection.disconnect(state)
 }
@@ -31,11 +61,13 @@ pub fn cross_connection_notify_test() {
   let cfg = test_config()
   // Listener connection
   let assert Ok(listener) = connection.connect(cfg)
-  let assert Ok(listener) = notifications.listen(listener, "cross_test", cfg.timeout)
+  let assert Ok(listener) =
+    notifications.listen(listener, "cross_test", cfg.timeout)
 
   // Sender connection
   let assert Ok(sender) = connection.connect(cfg)
-  let assert Ok(sender) = notifications.notify(sender, "cross_test", "world", cfg.timeout)
+  let assert Ok(sender) =
+    notifications.notify(sender, "cross_test", "world", cfg.timeout)
 
   // Check for notifications on listener
   let assert Ok(#(_notifs, listener)) =

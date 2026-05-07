@@ -1,5 +1,4 @@
 /// Codec registry benchmarks — Dict lookup is on every query's hot path.
-
 import bench/runner.{type BenchmarkResult}
 import gleam/list
 import gleamy/bench

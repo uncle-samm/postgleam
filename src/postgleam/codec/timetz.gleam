@@ -1,8 +1,9 @@
 /// PostgreSQL timetz codec - binary format
 /// Wire: 8 bytes int64 (microseconds) + 4 bytes int32 (tz offset seconds)
-
 import gleam/option
-import postgleam/codec.{type Codec, type CodecMatcher, Binary, Codec, CodecMatcher}
+import postgleam/codec.{
+  type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
+}
 import postgleam/value.{type Value, TimeTz}
 
 pub const oid = 1266
@@ -18,7 +19,13 @@ pub fn matcher() -> CodecMatcher {
 }
 
 fn build(type_oid: Int) -> Codec {
-  Codec(type_name: "timetz", oid: type_oid, format: Binary, encode: encode, decode: decode)
+  Codec(
+    type_name: "timetz",
+    oid: type_oid,
+    format: Binary,
+    encode: encode,
+    decode: decode,
+  )
 }
 
 pub fn encode(val: Value) -> Result(BitArray, String) {
@@ -30,7 +37,8 @@ pub fn encode(val: Value) -> Result(BitArray, String) {
 
 pub fn decode(data: BitArray) -> Result(Value, String) {
   case data {
-    <<usec:64-big-signed, tz_offset:32-big-signed>> -> Ok(TimeTz(usec, tz_offset))
+    <<usec:64-big-signed, tz_offset:32-big-signed>> ->
+      Ok(TimeTz(usec, tz_offset))
     _ -> Error("timetz codec: expected 12 bytes")
   }
 }

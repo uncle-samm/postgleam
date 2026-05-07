@@ -67,16 +67,14 @@ pub fn name_encode_test() {
 
 pub fn name_encode_too_long_test() {
   // 64 chars exactly should fail
-  let long =
-    "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl"
+  let long = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijkl"
   name.encode(value.Text(long))
   |> should.be_error()
 }
 
 pub fn name_encode_63_chars_test() {
   // 63 chars should succeed
-  let ok63 =
-    "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk"
+  let ok63 = "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwxyzabcdefghijk"
   name.encode(value.Text(ok63))
   |> should.be_ok()
 }
