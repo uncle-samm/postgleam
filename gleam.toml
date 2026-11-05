@@ -11,6 +11,9 @@ internal_modules = [
   "postgleam/auth/*",
 ]
 
+[erlang]
+extra_applications = ["ssl", "crypto", "public_key"]
+
 [dependencies]
 gleam_stdlib = ">= 1.0.5 and < 2.0.0"
 gleam_erlang = ">= 1.3.0 and < 2.0.0"

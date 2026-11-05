@@ -136,15 +136,26 @@ pub fn connect_multiple_queries_sequential_test() {
   connection.disconnect(state)
 }
 
-/// When server doesn't support SSL, requesting it should give a clear error
+/// Requesting TLS from a server without it is an error, never a silent
+/// fallback to plain text. (When the TLS test certificates are set up the
+/// server has TLS; tls_test covers that case.)
 pub fn connect_ssl_not_available_test() {
-  let cfg =
-    config.default()
-    |> config.password("postgres")
-    |> config.database("postgleam_test")
-    |> config.ssl(config.SslUnverified)
-  let assert Error(_) = connection.connect(cfg)
+  case is_file("build/tls/ca.pem") {
+    True -> Nil
+    False -> {
+      let cfg =
+        config.default()
+        |> config.password("postgres")
+        |> config.database("postgleam_test")
+        |> config.ssl(config.SslUnverified)
+      let assert Error(_) = connection.connect(cfg)
+      Nil
+    }
+  }
 }
+
+@external(erlang, "filelib", "is_file")
+fn is_file(path: String) -> Bool
 
 fn is_some(opt: option.Option(a)) -> Bool {
   case opt {

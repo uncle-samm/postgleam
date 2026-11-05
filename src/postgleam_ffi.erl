@@ -12,6 +12,14 @@
 %% with SNI and HTTPS-style host name matching (IP literals match the
 %% certificate's IP SANs and send no SNI).
 ssl_upgrade(TcpSock, Host, Timeout, Verify, CaFile, CertFile, KeyFile) ->
+    %% The ssl application must be running; it is not started by default
+    %% outside of a release. ensure_all_started is idempotent.
+    case application:ensure_all_started(ssl) of
+        {ok, _} -> ssl_connect(TcpSock, Host, Timeout, Verify, CaFile, CertFile, KeyFile);
+        {error, Reason} -> {error, format_reason({ssl_not_started, Reason})}
+    end.
+
+ssl_connect(TcpSock, Host, Timeout, Verify, CaFile, CertFile, KeyFile) ->
     HostCharlist = binary_to_list(Host),
     IsIp = case inet:parse_address(HostCharlist) of
         {ok, _} -> true;

@@ -49,6 +49,17 @@ jobs:
           docker restart "${{ job.services.postgres.id }}"
           until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"; do sleep 1; done
 
+      - name: Enable TLS on PostgreSQL for the TLS tests
+        run: |
+          ./scripts/make_test_certs.sh build/tls
+          container="${{ job.services.postgres.id }}"
+          docker cp build/tls/server.crt "$container":/var/lib/postgresql/data/server.crt
+          docker cp build/tls/server.key "$container":/var/lib/postgresql/data/server.key
+          docker exec "$container" bash -lc "chown postgres:postgres /var/lib/postgresql/data/server.* && chmod 600 /var/lib/postgresql/data/server.key && printf \"ssl = on\nssl_cert_file = 'server.crt'\nssl_key_file = 'server.key'\n\" >> /var/lib/postgresql/data/postgresql.conf"
+          docker restart "$container"
+          until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"; do sleep 1; done
+          psql "host=$PGHOST port=$PGPORT user=$PGUSER sslmode=verify-full sslrootcert=build/tls/ca.pem" -tc "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()"
+
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "27"
