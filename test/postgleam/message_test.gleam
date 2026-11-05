@@ -308,7 +308,7 @@ pub fn decode_data_row_test() {
   let assert Decoded(DataRow(values: values), <<>>) =
     message.decode_backend(data)
   let extracted = message.extract_row_values(values)
-  should.equal(extracted, [Some(col1), None])
+  should.equal(extracted, Ok([Some(col1), None]))
 }
 
 pub fn decode_error_response_test() {
@@ -446,12 +446,12 @@ pub fn decode_cstring_no_null_test() {
 // =============================================================================
 
 pub fn extract_row_values_empty_test() {
-  should.equal(message.extract_row_values(<<>>), [])
+  should.equal(message.extract_row_values(<<>>), Ok([]))
 }
 
 pub fn extract_row_values_with_null_test() {
   // -1 as int32 = 0xFFFFFFFF
-  should.equal(message.extract_row_values(<<255, 255, 255, 255>>), [None])
+  should.equal(message.extract_row_values(<<255, 255, 255, 255>>), Ok([None]))
 }
 
 pub fn extract_row_values_mixed_test() {
@@ -474,7 +474,21 @@ pub fn extract_row_values_mixed_test() {
     "42":utf8,
   >>
   let result = message.extract_row_values(data)
-  should.equal(result, [Some(col1), None, Some(<<"42":utf8>>)])
+  should.equal(result, Ok([Some(col1), None, Some(<<"42":utf8>>)]))
+}
+
+pub fn extract_row_values_truncated_test() {
+  // Says 5 bytes follow, only 2 do.
+  should.equal(
+    message.extract_row_values(<<0, 0, 0, 5, "hi":utf8>>),
+    Error(Nil),
+  )
+}
+
+pub fn decode_backend_rejects_short_length_test() {
+  // A length below 4 can never be valid.
+  let assert message.DecodeFailed(_) =
+    message.decode_backend(<<0x44, 0, 0, 0, 2>>)
 }
 
 // --- Helpers ---

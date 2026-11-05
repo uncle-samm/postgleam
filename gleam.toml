@@ -1,8 +1,15 @@
 name = "postgleam"
-version = "0.8.0"
-description = "A native Gleam PostgreSQL driver implementing the wire protocol"
+version = "0.9.0"
+description = "A PostgreSQL driver for Gleam, implementing the wire protocol in Gleam"
 licences = ["Apache-2.0"]
 repository = { type = "github", user = "uncle-samm", repo = "postgleam" }
+gleam = ">= 1.19.0"
+internal_modules = [
+  "postgleam/internal",
+  "postgleam/internal/*",
+  "postgleam/message",
+  "postgleam/auth/*",
+]
 
 [dependencies]
 gleam_stdlib = ">= 1.0.5 and < 2.0.0"

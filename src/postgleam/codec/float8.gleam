@@ -1,6 +1,7 @@
 /// PostgreSQL float8 (double precision) codec - binary format
 /// Wire: 8 bytes IEEE 754 double-precision
 /// Special values: NaN, +Infinity, -Infinity
+import gleam/int
 import gleam/option
 import postgleam/codec.{
   type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
@@ -36,7 +37,7 @@ pub fn encode(val: Value) -> Result(BitArray, String) {
     NaN -> Ok(<<0x7F, 0xF8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00>>)
     PosInfinity -> Ok(<<0x7F, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00>>)
     NegInfinity -> Ok(<<0xFF, 0xF0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00>>)
-    value.Integer(n) -> Ok(<<int_to_float(n):float-64-big>>)
+    value.Integer(n) -> Ok(<<int.to_float(n):float-64-big>>)
     _ -> Error("float8 codec: expected Float, NaN, PosInfinity, or NegInfinity")
   }
 }
@@ -60,6 +61,3 @@ pub fn decode(data: BitArray) -> Result(Value, String) {
     _ -> Error("float8 codec: expected 8 bytes")
   }
 }
-
-@external(erlang, "erlang", "float")
-fn int_to_float(n: Int) -> Float

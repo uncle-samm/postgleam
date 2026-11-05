@@ -4,9 +4,9 @@ import gleam/bit_array
 import gleam/option.{type Option}
 
 /// A PostgreSQL value
+/// SQL NULL is represented by `None` in an `Option(Value)`, never by a
+/// variant of this type.
 pub type Value {
-  /// NULL
-  Null
   /// Boolean
   Boolean(Bool)
   /// Integer (int2, int4, int8)

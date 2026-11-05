@@ -16,6 +16,7 @@ import postgleam/value
 
 fn test_config() {
   config.default()
+  |> config.password("postgres")
   |> config.database("postgleam_test")
 }
 
@@ -81,13 +82,13 @@ pub fn smoke_transaction_rollback_test() {
     postgleam.simple_query(conn, "CREATE TEMP TABLE _smoke_tx2 (id int)")
 
   // Transaction that rolls back
-  let assert Error(_) =
+  let assert Error(postgleam.RolledBack("intentional rollback")) =
     postgleam.transaction(conn, fn(conn) {
       let assert Ok(_) =
         postgleam.query(conn, "INSERT INTO _smoke_tx2 VALUES ($1::int4)", [
           Some(value.Integer(99)),
         ])
-      Error(postgleam.query_error("intentional rollback"))
+      Error("intentional rollback")
     })
 
   // Verify row NOT persisted
@@ -320,23 +321,21 @@ pub fn smoke_prepared_statement_test() {
 
 pub fn smoke_pool_test() {
   let cfg = test_config()
-  let assert Ok(started) = pool.start(cfg, 3)
-  let p = started.data
+  let assert Ok(p) = pool.start(cfg, 3)
 
   // Multiple queries through pool
-  let assert Ok(r1) = pool.query(p, "SELECT 1::int4", [], cfg.timeout)
+  let assert Ok(r1) = pool.query(p, "SELECT 1::int4", [])
   should.equal(r1.rows, [[Some(value.Integer(1))]])
 
-  let assert Ok(r2) = pool.query(p, "SELECT 2::int4", [], cfg.timeout)
+  let assert Ok(r2) = pool.query(p, "SELECT 2::int4", [])
   should.equal(r2.rows, [[Some(value.Integer(2))]])
 
   // Error recovery
-  let assert Error(_) =
-    pool.query(p, "SELECT * FROM nonexistent_xyz", [], cfg.timeout)
-  let assert Ok(r3) = pool.query(p, "SELECT 3::int4", [], cfg.timeout)
+  let assert Error(_) = pool.query(p, "SELECT * FROM nonexistent_xyz", [])
+  let assert Ok(r3) = pool.query(p, "SELECT 3::int4", [])
   should.equal(r3.rows, [[Some(value.Integer(3))]])
 
-  pool.shutdown(p, cfg.timeout)
+  pool.shutdown(p)
 }
 
 // =========================================================================

@@ -1,6 +1,7 @@
 /// PostgreSQL float4 (real) codec - binary format
 /// Wire: 4 bytes IEEE 754 single-precision
 /// Special values: NaN, +Infinity, -Infinity
+import gleam/int
 import gleam/option
 import postgleam/codec.{
   type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
@@ -32,11 +33,11 @@ fn build(type_oid: Int) -> Codec {
 
 pub fn encode(val: Value) -> Result(BitArray, String) {
   case val {
-    Float(f) -> Ok(encode_float32(f))
+    Float(f) -> encode_checked(f)
     NaN -> Ok(<<0x7F, 0xC0, 0x00, 0x00>>)
     PosInfinity -> Ok(<<0x7F, 0x80, 0x00, 0x00>>)
     NegInfinity -> Ok(<<0xFF, 0x80, 0x00, 0x00>>)
-    value.Integer(n) -> Ok(encode_float32(int_to_float(n)))
+    value.Integer(n) -> encode_checked(int.to_float(n))
     _ -> Error("float4 codec: expected Float, NaN, PosInfinity, or NegInfinity")
   }
 }
@@ -61,11 +62,22 @@ pub fn decode(data: BitArray) -> Result(Value, String) {
   }
 }
 
-@external(erlang, "postgleam_ffi", "encode_float32")
-fn encode_float32(f: Float) -> BitArray
+const float4_max = 3.4028234663852886e38
 
-@external(erlang, "postgleam_ffi", "decode_float32")
-fn decode_float32(data: BitArray) -> Result(Float, String)
+fn encode_checked(f: Float) -> Result(BitArray, String) {
+  case f >. float4_max || f <. 0.0 -. float4_max {
+    True -> Error("float4 codec: value out of range for real")
+    False -> Ok(encode_float32(f))
+  }
+}
 
-@external(erlang, "erlang", "float")
-fn int_to_float(n: Int) -> Float
+fn encode_float32(f: Float) -> BitArray {
+  <<f:float-size(32)>>
+}
+
+fn decode_float32(data: BitArray) -> Result(Float, String) {
+  case data {
+    <<f:float-size(32)>> -> Ok(f)
+    _ -> Error("float4 codec: expected 4 bytes")
+  }
+}

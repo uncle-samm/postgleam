@@ -1,16 +1,22 @@
-/// SCRAM-SHA-256 authentication implementation
-/// Based on RFC 5802 / 7677
+//// SCRAM-SHA-256 authentication (RFC 5802 / RFC 7677).
+
 import gleam/bit_array
+import gleam/crypto
+import gleam/erlang/atom.{type Atom}
 import gleam/int
 import gleam/list
 import gleam/result
 import gleam/string
 
+/// 18 random bytes encode to a 24-character base64 nonce.
 const nonce_rand_bytes = 18
 
-// 18 bytes -> 24 chars base64
+/// Iteration counts above this are refused: a malicious server could
+/// otherwise make the client burn CPU for minutes. PostgreSQL's default is
+/// 4096 and its `scram_iterations` setting is rarely raised past 100k.
+pub const max_iterations = 10_000_000
 
-/// State maintained across SCRAM message exchanges
+/// State kept between the SCRAM messages.
 pub type ScramState {
   ScramState(
     client_nonce: String,
@@ -22,17 +28,27 @@ pub type ScramState {
   )
 }
 
-/// Generate the client-first message for SCRAM-SHA-256 auth.
-/// Returns (mechanism, initial_response_data)
+/// Build the client-first message. Returns the mechanism name and the
+/// message bytes (`n,,n=,r=<nonce>`).
 pub fn client_first() -> #(String, BitArray) {
-  let nonce = generate_nonce()
-  let bare = "n=,r=" <> nonce
-  let msg = "n,," <> bare
+  let nonce =
+    bit_array.base64_encode(crypto.strong_random_bytes(nonce_rand_bytes), True)
+  let msg = "n,,n=,r=" <> nonce
   #("SCRAM-SHA-256", bit_array.from_string(msg))
 }
 
-/// Process the server-first message and produce the client-final message.
-/// Returns (client_final_bytes, scram_state) or an error.
+/// Extract the client-first-bare part (`n=,r=<nonce>`) of a client-first message.
+pub fn extract_client_first_bare(
+  client_first_data: BitArray,
+) -> Result(String, Nil) {
+  use s <- result.try(bit_array.to_string(client_first_data))
+  case string.split_once(s, ",,") {
+    Ok(#(_, bare)) -> Ok(bare)
+    Error(_) -> Error(Nil)
+  }
+}
+
+/// Process the server-first message and build the client-final message.
 pub fn client_final(
   server_first: BitArray,
   client_first_bare: String,
@@ -43,9 +59,21 @@ pub fn client_final(
     |> result.replace_error("Invalid server-first encoding"),
   )
   let fields = parse_server_data(server_first_str)
-
+  use client_nonce <- result.try(
+    get_field(parse_server_data(client_first_bare), "r")
+    |> result.replace_error("Missing client nonce in client-first message"),
+  )
   use server_nonce <- result.try(
     get_field(fields, "r") |> result.replace_error("Missing server nonce (r)"),
+  )
+  use _ <- result.try(
+    case
+      string.starts_with(server_nonce, client_nonce)
+      && string.length(server_nonce) > string.length(client_nonce)
+    {
+      True -> Ok(Nil)
+      False -> Error("Server nonce does not extend the client nonce")
+    },
   )
   use salt_b64 <- result.try(
     get_field(fields, "s") |> result.replace_error("Missing salt (s)"),
@@ -54,19 +82,28 @@ pub fn client_final(
     get_field(fields, "i") |> result.replace_error("Missing iterations (i)"),
   )
   use salt <- result.try(
-    base64_decode(salt_b64) |> result.replace_error("Invalid salt base64"),
+    bit_array.base64_decode(salt_b64)
+    |> result.replace_error("Invalid salt base64"),
   )
   use iterations <- result.try(
     int.parse(iterations_str) |> result.replace_error("Invalid iteration count"),
   )
+  use _ <- result.try(case iterations >= 1 && iterations <= max_iterations {
+    True -> Ok(Nil)
+    False ->
+      Error(
+        "SCRAM iteration count out of range (1.."
+        <> int.to_string(max_iterations)
+        <> "): "
+        <> iterations_str,
+      )
+  })
 
-  // Derive keys
-  let salted_password = hi(password, salt, iterations)
-  let client_key = hmac_sha256(salted_password, <<"Client Key":utf8>>)
-  let server_key = hmac_sha256(salted_password, <<"Server Key":utf8>>)
-  let stored_key = sha256(client_key)
+  let salted_password = hi(saslprep(password), salt, iterations)
+  let client_key = hmac(salted_password, <<"Client Key":utf8>>)
+  let server_key = hmac(salted_password, <<"Server Key":utf8>>)
+  let stored_key = crypto.hash(crypto.Sha256, client_key)
 
-  // Build auth message
   let client_final_without_proof = "c=biws,r=" <> server_nonce
   let auth_message =
     client_first_bare
@@ -75,27 +112,25 @@ pub fn client_final(
     <> ","
     <> client_final_without_proof
 
-  // Compute proof
-  let client_sig = hmac_sha256(stored_key, bit_array.from_string(auth_message))
+  let client_sig = hmac(stored_key, bit_array.from_string(auth_message))
   let proof = xor_bytes(client_key, client_sig)
-  let proof_b64 = base64_encode(proof)
+  let client_final =
+    client_final_without_proof <> ",p=" <> bit_array.base64_encode(proof, True)
 
-  let client_final = client_final_without_proof <> ",p=" <> proof_b64
-
-  let state =
+  Ok(#(
+    bit_array.from_string(client_final),
     ScramState(
-      client_nonce: "",
+      client_nonce: client_nonce,
       salt: salt,
       iterations: iterations,
       auth_message: auth_message,
       client_key: client_key,
       server_key: server_key,
-    )
-
-  Ok(#(bit_array.from_string(client_final), state))
+    ),
+  ))
 }
 
-/// Verify the server-final message
+/// Verify the server-final message (mutual authentication).
 pub fn verify_server(
   server_final: BitArray,
   state: ScramState,
@@ -105,7 +140,6 @@ pub fn verify_server(
     |> result.replace_error("Invalid server-final encoding"),
   )
   let fields = parse_server_data(server_final_str)
-
   case get_field(fields, "e") {
     Ok(err) -> Error("SCRAM server error: " <> err)
     Error(_) -> {
@@ -114,14 +148,12 @@ pub fn verify_server(
         |> result.replace_error("Missing server verifier (v)"),
       )
       use server_sig <- result.try(
-        base64_decode(verifier_b64)
+        bit_array.base64_decode(verifier_b64)
         |> result.replace_error("Invalid verifier base64"),
       )
-
       let expected =
-        hmac_sha256(state.server_key, bit_array.from_string(state.auth_message))
-
-      case server_sig == expected {
+        hmac(state.server_key, bit_array.from_string(state.auth_message))
+      case crypto.secure_compare(server_sig, expected) {
         True -> Ok(Nil)
         False -> Error("Cannot verify SCRAM server signature")
       }
@@ -129,101 +161,57 @@ pub fn verify_server(
   }
 }
 
-/// Extract the client-first-bare from a client-first message.
-/// The client-first message is "n,,n=,r=<nonce>" — the bare part is "n=,r=<nonce>"
-pub fn extract_client_first_bare(
-  client_first_data: BitArray,
-) -> Result(String, Nil) {
-  use s <- result.try(bit_array.to_string(client_first_data))
-  // Skip the "n,," prefix (GS2 header)
-  case string.split_once(s, ",,") {
-    Ok(#(_, bare)) -> Ok(bare)
-    Error(_) -> Error(Nil)
-  }
+/// Simplified SASLprep (RFC 4013): NFKC-normalise the password, as
+/// PostgreSQL does. ASCII passwords are unchanged.
+fn saslprep(password: String) -> String {
+  nfkc(password)
 }
 
-// --- Hi (PBKDF2-SHA-256) ---
-
+/// Hi(password, salt, i) = PBKDF2-HMAC-SHA256.
 fn hi(password: String, salt: BitArray, iterations: Int) -> BitArray {
-  let password_bytes = bit_array.from_string(password)
-  // U1 = HMAC(password, salt || INT(1))
-  let salt_with_one = <<salt:bits, 0, 0, 0, 1>>
-  let u1 = hmac_sha256(password_bytes, salt_with_one)
-  iterate(password_bytes, iterations - 1, u1, u1)
+  pbkdf2_hmac(
+    atom.create("sha256"),
+    bit_array.from_string(password),
+    salt,
+    iterations,
+    32,
+  )
 }
 
-fn iterate(
-  key: BitArray,
-  remaining: Int,
-  prev: BitArray,
-  acc: BitArray,
-) -> BitArray {
-  case remaining {
-    0 -> acc
-    _ -> {
-      let next = hmac_sha256(key, prev)
-      let new_acc = xor_bytes(next, acc)
-      iterate(key, remaining - 1, next, new_acc)
-    }
-  }
+fn hmac(key: BitArray, data: BitArray) -> BitArray {
+  crypto.hmac(data, crypto.Sha256, key)
 }
 
-// --- FFI wrappers ---
-
-@external(erlang, "postgleam_ffi", "crypto_exor")
-fn xor_bytes(a: BitArray, b: BitArray) -> BitArray
-
-@external(erlang, "postgleam_ffi", "crypto_strong_rand_bytes")
-fn strong_rand_bytes(n: Int) -> BitArray
-
-@external(erlang, "postgleam_ffi", "crypto_mac_hmac")
-fn hmac_sha256(key: BitArray, data: BitArray) -> BitArray
-
-@external(erlang, "postgleam_ffi", "sha256_hash")
-fn sha256(data: BitArray) -> BitArray
-
-fn generate_nonce() -> String {
-  let bytes = strong_rand_bytes(nonce_rand_bytes)
-  base64_encode(bytes)
-}
-
-@external(erlang, "base64", "encode")
-fn base64_encode_raw(data: BitArray) -> BitArray
-
-fn base64_encode(data: BitArray) -> String {
-  let encoded = base64_encode_raw(data)
-  let assert Ok(s) = bit_array.to_string(encoded)
-  s
-}
-
-@external(erlang, "postgleam_ffi", "base64_decode")
-fn base64_decode_raw(data: BitArray) -> Result(BitArray, Nil)
-
-fn base64_decode(s: String) -> Result(BitArray, Nil) {
-  let data = bit_array.from_string(s)
-  base64_decode_raw(data)
-}
-
-// --- Parse "key=value,key=value" format ---
-
-fn parse_server_data(data: String) -> List(#(String, String)) {
-  data
-  |> string.split(",")
-  |> list.filter_map(fn(kv) {
-    case string.split_once(kv, "=") {
-      Ok(#(k, v)) -> Ok(#(k, v))
-      Error(_) -> Error(Nil)
-    }
-  })
+/// XOR two 32-byte values.
+fn xor_bytes(a: BitArray, b: BitArray) -> BitArray {
+  let assert <<x:256>> = a
+  let assert <<y:256>> = b
+  <<int.bitwise_exclusive_or(x, y):256>>
 }
 
 fn get_field(
   fields: List(#(String, String)),
   key: String,
 ) -> Result(String, Nil) {
-  case fields {
-    [] -> Error(Nil)
-    [#(k, v), ..] if k == key -> Ok(v)
-    [_, ..rest] -> get_field(rest, key)
-  }
+  list.key_find(fields, key)
 }
+
+fn parse_server_data(data: String) -> List(#(String, String)) {
+  data
+  |> string.split(",")
+  |> list.filter_map(string.split_once(_, "="))
+}
+
+// Erlang standard library calls (no Gleam API exists for these).
+
+@external(erlang, "crypto", "pbkdf2_hmac")
+fn pbkdf2_hmac(
+  digest: Atom,
+  password: BitArray,
+  salt: BitArray,
+  iterations: Int,
+  key_length: Int,
+) -> BitArray
+
+@external(erlang, "unicode", "characters_to_nfkc_binary")
+fn nfkc(s: String) -> String

@@ -87,7 +87,10 @@ fn run_integration() -> Nil {
 }
 
 fn run_realworld() -> Nil {
-  let cfg = config.default() |> config.database("postgleam_test")
+  let cfg =
+    config.default()
+    |> config.password("postgres")
+    |> config.database("postgleam_test")
   let _ = realworld_bench.run(cfg)
   Nil
 }
