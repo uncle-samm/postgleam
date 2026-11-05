@@ -227,15 +227,13 @@ fn handle_message(
     }
 
     Fold(sql, fold, reply) -> {
-      // Portals need a statement; the unnamed one is fine (and PgBouncer
-      // safe) because the whole fold runs inside one actor turn.
+      // The unnamed statement, described without a Sync, keeps the whole
+      // fold in one protocol cycle: PgBouncer keeps the same backend.
       let #(result, state) =
         run(state, fn(conn) {
-          use #(prepared, conn) <- result.try(connection.prepare_f(
+          use #(prepared, conn) <- result.try(connection.describe_unnamed_f(
             conn,
-            "",
             sql,
-            [],
             state.config.timeout,
           ))
           fold(conn, prepared, state.registry)

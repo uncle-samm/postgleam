@@ -830,6 +830,30 @@ pub fn prepare_f(
   Ok(#(prepared, state))
 }
 
+/// Describe `sql` as the unnamed statement with Parse + Describe + Flush.
+/// No Sync is sent, so the cycle stays open (PgBouncer keeps the same
+/// backend) and the caller must continue with Bind/Execute and end with
+/// Sync. On a server error the connection is resynchronised.
+@internal
+pub fn describe_unnamed_f(
+  state: ConnectionState,
+  sql: String,
+  timeout: Int,
+) -> Result(#(PreparedStatement, ConnectionState), Failure) {
+  use _ <- result.try(
+    check_sql(sql) |> result.map_error(Failure(_, Some(state))),
+  )
+  use state <- result.try(
+    send_messages(state, [
+      message.Parse("", sql, []),
+      message.Describe(message.DescribeStatement, ""),
+      message.Flush,
+    ])
+    |> lift,
+  )
+  recv_description(state, "", sql, timeout, True)
+}
+
 /// Receive ParseComplete + ParameterDescription + RowDescription/NoData.
 fn recv_description(
   state: ConnectionState,
@@ -1256,8 +1280,20 @@ pub fn bind_and_execute_portal_f(
   timeout: Int,
 ) -> Result(#(StreamChunk, ConnectionState), Failure) {
   use #(formats, encoded) <- result.try(
-    encode_params(params, prepared.param_oids, registry)
-    |> result.map_error(Failure(_, Some(state))),
+    case encode_params(params, prepared.param_oids, registry) {
+      Ok(encoded) -> Ok(encoded)
+      // The statement may have been described without a Sync (see
+      // `describe_unnamed_f`); a Sync closes that cycle, and is harmless
+      // when there is none.
+      Error(e) ->
+        case
+          send_message(state, message.Sync)
+          |> result.try(drain_to_ready(_, timeout))
+        {
+          Ok(state) -> Error(Failure(error: e, state: Some(state)))
+          Error(e2) -> Error(fatal(e2))
+        }
+    },
   )
   use state <- result.try(
     send_messages(state, [

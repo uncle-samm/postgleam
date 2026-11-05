@@ -360,8 +360,9 @@ make check                      # format check, build, tests, docs
 ```
 
 The TLS tests run when `build/tls/ca.pem` exists and the server uses the
-matching certificate. `scripts/make_test_certs.sh` creates them; CI runs
-these tests against a TLS-enabled server.
+matching certificate (`scripts/make_test_certs.sh` creates them). The
+PgBouncer tests run when PgBouncer in transaction mode answers on
+`localhost:6432`. CI runs both.
 
 ## Target
 

@@ -326,6 +326,34 @@ pub fn query_fold_test() {
   postgleam.disconnect(conn)
 }
 
+/// query_fold keeps the connection in sync on every kind of failure, and
+/// works in PgBouncer mode (the whole fold is one protocol cycle).
+pub fn query_fold_failures_test() {
+  let decoder = {
+    use n <- decode.element(0, decode.int)
+    decode.success(n)
+  }
+  list.each([False, True], fn(bouncer) {
+    let cfg = test_config() |> config.pgbouncer(bouncer)
+    let assert Ok(conn) = postgleam.connect(cfg)
+    let sum = fn(sql, params) {
+      postgleam.query_fold(conn, sql, params, 2, decoder, 0, int.add)
+    }
+    let assert Ok(15) = sum("SELECT generate_series(1, 5)", [])
+    // Server error while describing.
+    let assert Error(error.PgError(..)) = sum("SELEC 1", [])
+    // Encode error after describing.
+    let assert Error(error.EncodeError(_)) =
+      sum("SELECT generate_series(1, $1::int4)", [postgleam.numeric("x")])
+    // Server error while fetching rows.
+    let assert Error(error.PgError(..)) =
+      sum("SELECT 10 / (3 - generate_series(1, 5))", [])
+    let assert Ok(r) = postgleam.query(conn, "SELECT 1::int4", [])
+    should.equal(r.rows, [[Some(value.Integer(1))]])
+    postgleam.disconnect(conn)
+  })
+}
+
 pub fn multidimensional_array_test() {
   let assert Ok(conn) = postgleam.connect(test_config())
   let assert Ok(r) =
