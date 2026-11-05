@@ -52,7 +52,7 @@ jobs:
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "27"
-          gleam-version: "1.14.0"
+          gleam-version: "1.19.2"
 
       - name: Install dependencies
         run: gleam deps download
@@ -82,7 +82,7 @@ jobs:
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "27"
-          gleam-version: "1.14.0"
+          gleam-version: "1.19.2"
 
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client

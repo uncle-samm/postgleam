@@ -27,7 +27,10 @@ pub type ValueDecoder(a) =
   fn(Option(Value)) -> Result(a, Error)
 
 /// Run a decoder on a row.
-pub fn run(decoder: RowDecoder(a), row: List(Option(Value))) -> Result(a, Error) {
+pub fn run(
+  decoder: RowDecoder(a),
+  row: List(Option(Value)),
+) -> Result(a, Error) {
   decoder.run(row)
 }
 
@@ -309,7 +312,9 @@ pub fn line(val: Option(Value)) -> Result(#(Float, Float, Float), Error) {
 }
 
 /// Decode a line segment as #(x1, y1, x2, y2).
-pub fn lseg(val: Option(Value)) -> Result(#(Float, Float, Float, Float), Error) {
+pub fn lseg(
+  val: Option(Value),
+) -> Result(#(Float, Float, Float, Float), Error) {
   case val {
     Some(value.Lseg(x1, y1, x2, y2)) -> Ok(#(x1, y1, x2, y2))
     Some(other) ->
@@ -339,7 +344,9 @@ pub fn circle(val: Option(Value)) -> Result(#(Float, Float, Float), Error) {
 }
 
 /// Decode a path as #(closed, points).
-pub fn path(val: Option(Value)) -> Result(#(Bool, List(#(Float, Float))), Error) {
+pub fn path(
+  val: Option(Value),
+) -> Result(#(Bool, List(#(Float, Float))), Error) {
   case val {
     Some(value.Path(closed, pts)) -> Ok(#(closed, pts))
     Some(other) ->

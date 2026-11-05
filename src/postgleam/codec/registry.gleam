@@ -64,7 +64,11 @@ pub fn find_by_send(
 }
 
 /// Register a single OID with a specific matcher's build function
-pub fn register(registry: Registry, oid: Int, matcher: CodecMatcher) -> Registry {
+pub fn register(
+  registry: Registry,
+  oid: Int,
+  matcher: CodecMatcher,
+) -> Registry {
   let codec = { matcher.build }(oid)
   dict.insert(registry, oid, codec)
 }

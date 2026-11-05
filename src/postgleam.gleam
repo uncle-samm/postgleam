@@ -180,7 +180,10 @@ pub fn copy_in(
 /// Export data using the COPY protocol.
 /// `sql` should be a COPY ... TO STDOUT statement.
 /// Returns the raw data chunks from PostgreSQL.
-pub fn copy_out(conn: Connection, sql: String) -> Result(List(BitArray), Error) {
+pub fn copy_out(
+  conn: Connection,
+  sql: String,
+) -> Result(List(BitArray), Error) {
   process.call(conn.subject, conn.config.timeout, fn(reply) {
     connection_actor.CopyOut(sql, reply)
   })

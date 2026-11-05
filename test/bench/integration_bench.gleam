@@ -61,7 +61,9 @@ fn bench_connect_disconnect(cfg: config.Config) -> bench.BenchResults {
   )
 }
 
-fn bench_simple_query_select_1(conn: postgleam.Connection) -> bench.BenchResults {
+fn bench_simple_query_select_1(
+  conn: postgleam.Connection,
+) -> bench.BenchResults {
   bench.run(
     [bench.Input("select_1", conn)],
     [
@@ -143,7 +145,9 @@ fn bench_query_with_decoder(conn: postgleam.Connection) -> bench.BenchResults {
   )
 }
 
-fn bench_prepare_execute_close(conn: postgleam.Connection) -> bench.BenchResults {
+fn bench_prepare_execute_close(
+  conn: postgleam.Connection,
+) -> bench.BenchResults {
   bench.run(
     [bench.Input("lifecycle", conn)],
     [

@@ -86,7 +86,10 @@ pub fn register_arrays(base: Registry) -> Registry {
   register_arrays_loop(array_oid_map(), base)
 }
 
-fn register_arrays_loop(mappings: List(#(Int, Int)), reg: Registry) -> Registry {
+fn register_arrays_loop(
+  mappings: List(#(Int, Int)),
+  reg: Registry,
+) -> Registry {
   case mappings {
     [] -> reg
     [#(array_oid, elem_oid), ..rest] -> {
