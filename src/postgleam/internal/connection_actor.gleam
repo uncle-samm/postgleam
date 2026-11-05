@@ -78,8 +78,15 @@ pub type Message {
   /// Pool check-in: roll back any open transaction, then call `done`
   /// (from the actor) with whether the connection is still open.
   Reset(done: fn(Bool) -> Nil)
-  /// Pool health check: run `SELECT 1` if idle; reconnect if needed.
-  Ping
+  /// Pool health check: run `SELECT 1`, waiting at most the connect
+  /// timeout (capped by the query timeout). If that fails, reconnect at
+  /// once. `done` is called (from the actor) with whether the ping
+  /// succeeded.
+  Ping(done: fn(Bool) -> Nil)
+  /// Close the connection without asking the server, then open a new one.
+  /// For sockets that are presumed dead, such as after the host was
+  /// suspended. `done` is called with whether the new connection is open.
+  Recycle(done: fn(Bool) -> Nil)
   Disconnect(reply: Subject(Nil))
 }
 
@@ -313,13 +320,36 @@ fn handle_message(
       actor.continue(state)
     }
 
-    Ping -> {
-      let #(_, state) =
-        run(state, connection.simple_query_f(
-          _,
-          "SELECT 1",
-          state.config.timeout,
-        ))
+    Ping(done) -> {
+      let timeout = int.min(state.config.timeout, state.config.connect_timeout)
+      let #(result, state) =
+        run(state, connection.simple_query_f(_, "SELECT 1", timeout))
+      let state = case result {
+        Ok(_) -> state
+        // The failed ping dropped the connection; reconnect now so the
+        // next caller does not pay for it.
+        Error(_) -> reconnect(state)
+      }
+      done(result.is_ok(result))
+      actor.continue(state)
+    }
+
+    Recycle(done) -> {
+      let state = case state.conn {
+        Some(conn) -> {
+          connection.disconnect(conn)
+          ActorState(
+            ..state,
+            conn: None,
+            cache: dict.new(),
+            cache_order: [],
+            lost_transaction: False,
+          )
+        }
+        None -> ActorState(..state, lost_transaction: False)
+      }
+      let state = reconnect(state)
+      done(option.is_some(state.conn))
       actor.continue(state)
     }
 
@@ -409,6 +439,17 @@ fn run(
           drop_connection(state, conn, e),
         )
       }
+  }
+}
+
+/// Open a connection if there is none. A failure leaves the actor
+/// disconnected; the next request tries again and reports the error.
+fn reconnect(state: ActorState) -> ActorState {
+  case state.lost_transaction, ensure_connected(state) {
+    // Keep the failure visible to the transaction's owner.
+    True, _ -> state
+    False, Ok(#(_, state)) -> state
+    False, Error(#(_, state)) -> state
   }
 }
 

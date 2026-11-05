@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.9.1
+
+### Added
+
+- `pool.reconnect_all` reconnects every connection in the pool, for
+  applications that know their sockets are dead (for example after the host
+  resumed from a suspend). Idle connections are reconnected right away and
+  busy ones when they are checked in.
+- When the pool finds a broken connection it pings all idle connections at
+  once and reconnects the ones that fail. Sockets that went half-open
+  together are no longer discovered one timed-out query at a time.
+  Thanks to @kadei-rat, whose `aggressive_reconnect` proposal in #1
+  inspired this.
+
+### Changed
+
+- Pool health-check pings wait at most `config.connect_timeout` instead of
+  the full query timeout, reconnect at once when they fail, and the
+  connection is not handed out while it is being checked.
+
 ## 0.9.0
 
 This release fixes the problems found in a full review of the driver. It has

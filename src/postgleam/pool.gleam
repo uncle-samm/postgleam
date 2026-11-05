@@ -27,8 +27,15 @@
 //// The pool also:
 //// - pings connections that have been idle for `config.idle_interval` ms,
 ////   reconnecting broken ones before a caller needs them;
+//// - when it finds a broken connection, checks every idle connection at
+////   once, so sockets that died together (for example while the host was
+////   suspended) are replaced in one sweep instead of one failed query at a
+////   time;
 //// - replaces a connection whose actor crashed;
 //// - takes a connection back if the caller holding it exits.
+////
+//// An application that knows its sockets are dead, for example right after
+//// the machine resumed from a suspend, can call `reconnect_all`.
 
 import gleam/bool
 import gleam/dict.{type Dict}
@@ -59,7 +66,9 @@ pub opaque type Pool {
 pub opaque type PoolMessage {
   Checkout(caller: Pid, reply: Subject(Result(#(Int, Connection), Error)))
   Checkin(id: Int)
-  ResetDone(id: Int)
+  ResetDone(id: Int, healthy: Bool)
+  CheckDone(id: Int, healthy: Bool, sweep: Bool)
+  ReconnectAll(reply: Subject(Result(Nil, Error)))
   CallerDown(process.Down)
   ConnectionExit(ExitMessage)
   ExpireWaiters
@@ -70,7 +79,14 @@ pub opaque type PoolMessage {
 }
 
 type Slot {
-  Slot(conn: Connection, pid: Pid, status: SlotStatus)
+  Slot(
+    conn: Connection,
+    pid: Pid,
+    status: SlotStatus,
+    /// Reconnect this connection when it is next free (set by
+    /// `reconnect_all` while the connection was in use).
+    stale: Bool,
+  )
 }
 
 type SlotStatus {
@@ -80,6 +96,8 @@ type SlotStatus {
   Busy(monitor: Monitor)
   /// Checked in; waiting for the connection to roll back leftovers.
   Resetting
+  /// Being pinged or reconnected; not handed out until it reports back.
+  Checking
 }
 
 type Waiter {
@@ -102,8 +120,14 @@ type State {
     next_id: Int,
     /// Number of connections that crashed and could not be replaced yet.
     missing: Int,
+    /// When the last sweep started (monotonic ms), to stop a server that is
+    /// down from triggering one sweep per failed query.
+    last_sweep: Int,
   )
 }
+
+/// Minimum time between two sweeps.
+const sweep_interval = 1000
 
 /// Start a pool of `size` connections. All connections are opened before
 /// this returns, so a bad config or an unreachable server fails here. The
@@ -189,6 +213,7 @@ fn builder(
         waiters: [],
         next_id: size,
         missing: 0,
+        last_sweep: now() - sweep_interval,
       )
     process.send_after(internal, config.idle_interval, PingIdle)
     let selector =
@@ -250,6 +275,7 @@ fn new_slot(
     conn: postgleam.from_actor(started.data, started.pid, config),
     pid: started.pid,
     status: Idle(since: now()),
+    stale: False,
   )
 }
 
@@ -293,12 +319,39 @@ fn handle_message(
         _ -> actor.continue(state)
       }
 
-    ResetDone(id) ->
+    ResetDone(id, healthy) ->
       case dict.get(state.slots, id) {
-        Ok(Slot(status: Resetting, ..) as slot) ->
-          actor.continue(release(state, id, slot))
+        Ok(Slot(status: Resetting, stale: True, ..) as slot) ->
+          actor.continue(recycle(state, id, slot))
+        Ok(Slot(status: Resetting, ..) as slot) -> {
+          let state = release(state, id, slot)
+          // The last user lost the connection: others may be gone too.
+          actor.continue(case healthy {
+            True -> state
+            False -> sweep(state)
+          })
+        }
         _ -> actor.continue(state)
       }
+
+    CheckDone(id, healthy, from_sweep) ->
+      case dict.get(state.slots, id) {
+        Ok(Slot(status: Checking, stale: True, ..) as slot) ->
+          actor.continue(recycle(state, id, slot))
+        Ok(Slot(status: Checking, ..) as slot) -> {
+          let state = release(state, id, slot)
+          actor.continue(case healthy || from_sweep {
+            True -> state
+            False -> sweep(state)
+          })
+        }
+        _ -> actor.continue(state)
+      }
+
+    ReconnectAll(reply) -> {
+      process.send(reply, Ok(Nil))
+      actor.continue(reconnect_all_slots(state))
+    }
 
     CallerDown(process.ProcessDown(monitor:, ..)) ->
       actor.continue(caller_down(state, monitor))
@@ -323,22 +376,10 @@ fn handle_message(
 
     PingIdle -> {
       let cutoff = now() - state.config.idle_interval
-      dict.each(state.slots, fn(_, slot) {
-        case slot.status {
-          Idle(since) if since <= cutoff ->
-            process.send(postgleam.subject(slot.conn), connection_actor.Ping)
-          _ -> Nil
-        }
-      })
-      let slots =
-        dict.map_values(state.slots, fn(_, slot) {
-          case slot.status {
-            Idle(since) if since <= cutoff -> Slot(..slot, status: Idle(now()))
-            _ -> slot
-          }
-        })
+      let state =
+        check_idle(state, fn(since) { since <= cutoff }, ping(state, _, False))
       process.send_after(state.self, state.config.idle_interval, PingIdle)
-      actor.continue(State(..state, slots:))
+      actor.continue(state)
     }
 
     Replenish -> actor.continue(replenish(state))
@@ -380,6 +421,89 @@ fn take_idle(state: State) -> Result(#(Int, Slot), Nil) {
   })
 }
 
+/// Mark the idle connections whose idle-since time passes `pick` as
+/// `Checking` and run `check` on each, in parallel (each connection is its
+/// own actor). `check` must make the connection report back with
+/// `CheckDone`.
+fn check_idle(
+  state: State,
+  pick: fn(Int) -> Bool,
+  check: fn(#(Int, Slot)) -> Nil,
+) -> State {
+  let picked =
+    dict.to_list(state.slots)
+    |> list.filter(fn(entry) {
+      case { entry.1 }.status {
+        Idle(since) -> pick(since)
+        _ -> False
+      }
+    })
+  list.each(picked, check)
+  let slots =
+    list.fold(picked, state.slots, fn(slots, entry) {
+      dict.insert(slots, entry.0, Slot(..entry.1, status: Checking))
+    })
+  State(..state, slots:)
+}
+
+fn ping(state: State, entry: #(Int, Slot), from_sweep: Bool) -> Nil {
+  let pool = state.self
+  let id = entry.0
+  process.send(
+    postgleam.subject({ entry.1 }.conn),
+    connection_actor.Ping(fn(healthy) {
+      process.send(pool, CheckDone(id, healthy, from_sweep))
+    }),
+  )
+}
+
+fn send_recycle(state: State, id: Int, slot: Slot) -> Nil {
+  let pool = state.self
+  process.send(
+    postgleam.subject(slot.conn),
+    connection_actor.Recycle(fn(healthy) {
+      process.send(pool, CheckDone(id, healthy, True))
+    }),
+  )
+}
+
+/// A connection was found broken. Ping every idle connection now instead
+/// of waiting for each to fail a query. Failures found by the sweep do not
+/// start another sweep.
+fn sweep(state: State) -> State {
+  let now = now()
+  use <- bool.guard(now - state.last_sweep < sweep_interval, state)
+  check_idle(State(..state, last_sweep: now), fn(_) { True }, ping(
+    state,
+    _,
+    True,
+  ))
+}
+
+/// Reconnect one connection that is free, then release it.
+fn recycle(state: State, id: Int, slot: Slot) -> State {
+  send_recycle(state, id, slot)
+  let slot = Slot(..slot, status: Checking, stale: False)
+  State(..state, slots: dict.insert(state.slots, id, slot))
+}
+
+/// Reconnect idle connections now, and the rest as soon as they are free.
+fn reconnect_all_slots(state: State) -> State {
+  let state =
+    State(
+      ..state,
+      slots: dict.map_values(state.slots, fn(_, slot) {
+        case slot.status {
+          Idle(_) -> slot
+          _ -> Slot(..slot, stale: True)
+        }
+      }),
+    )
+  check_idle(state, fn(_) { True }, fn(entry) {
+    send_recycle(state, entry.0, entry.1)
+  })
+}
+
 fn grant(state: State, id: Int, slot: Slot, waiter: Waiter) -> State {
   process.send(waiter.reply, Ok(#(id, slot.conn)))
   let slot = Slot(..slot, status: Busy(waiter.monitor))
@@ -389,10 +513,13 @@ fn grant(state: State, id: Int, slot: Slot, waiter: Waiter) -> State {
 /// Ask the connection to roll back whatever its last user left open; it
 /// reports back with `ResetDone`.
 fn begin_reset(state: State, id: Int, slot: Slot) -> State {
+  use <- bool.lazy_guard(slot.stale, fn() { recycle(state, id, slot) })
   let pool = state.self
   process.send(
     postgleam.subject(slot.conn),
-    connection_actor.Reset(fn(_healthy) { process.send(pool, ResetDone(id)) }),
+    connection_actor.Reset(fn(healthy) {
+      process.send(pool, ResetDone(id, healthy))
+    }),
   )
   let slot = Slot(..slot, status: Resetting)
   State(..state, slots: dict.insert(state.slots, id, slot))
@@ -601,6 +728,24 @@ pub fn transaction(
   }
 }
 
+/// Reconnect every connection in the pool: idle ones now, and ones in use
+/// as soon as they are checked back in. The old sockets are closed without
+/// waiting for the server, so this is quick even when they are dead.
+///
+/// Use it when the application knows its connections cannot have survived,
+/// for example right after the machine resumed from a suspend. Returns once
+/// the pool has started the reconnects; callers that check out a connection
+/// meanwhile get one that has been reconnected.
+pub fn reconnect_all(pool: Pool) -> Result(Nil, Error) {
+  call.call(
+    pool.subject,
+    ReconnectAll,
+    call.UntilReplyOrExit,
+    Error(not_running()),
+    Error(error.PoolTimeout),
+  )
+}
+
 /// Stop the pool and close all its connections. Callers still holding a
 /// connection get errors on their next call.
 pub fn shutdown(pool: Pool) -> Nil {
@@ -614,7 +759,8 @@ pub type Stats {
     size: Int,
     /// Connections free right now.
     idle: Int,
-    /// Connections checked out (or being reset after check-in).
+    /// Connections checked out, being reset after check-in, or being
+    /// pinged or reconnected.
     busy: Int,
     /// Callers waiting for a connection.
     waiting: Int,
