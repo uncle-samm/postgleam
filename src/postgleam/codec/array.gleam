@@ -3,10 +3,14 @@
 ///       + per-dim: length(int32) + lower_bound(int32)
 ///       + per-element: -1(int32) for NULL | byte_len(int32) + data
 ///
-/// Only supports 1-dimensional arrays.
+/// Multi-dimensional arrays are nested `Array` values (an array of rows).
+/// Lower bounds other than 1 are accepted when decoding and dropped.
 import gleam/bit_array
+import gleam/dict
+import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/result
 import postgleam/codec.{type Codec, Binary, Codec}
 import postgleam/codec/registry.{type Registry}
 import postgleam/value.{type Value, Array}
@@ -86,14 +90,17 @@ pub fn register_arrays(base: Registry) -> Registry {
   register_arrays_loop(array_oid_map(), base)
 }
 
-fn register_arrays_loop(mappings: List(#(Int, Int)), reg: Registry) -> Registry {
+fn register_arrays_loop(
+  mappings: List(#(Int, Int)),
+  reg: Registry,
+) -> Registry {
   case mappings {
     [] -> reg
     [#(array_oid, elem_oid), ..rest] -> {
       let reg = case registry.lookup(reg, elem_oid) {
         Ok(elem_codec) -> {
           let array_codec = build_array_codec(elem_codec, array_oid)
-          insert_codec(array_oid, array_codec, reg)
+          dict.insert(reg, array_oid, array_codec)
         }
         Error(_) -> reg
       }
@@ -110,29 +117,81 @@ fn encode_array(
   elem_encode: fn(Value) -> Result(BitArray, String),
 ) -> Result(BitArray, String) {
   case val {
+    Array([]) -> Ok(<<0:32-big, 0:32-big, elem_oid:32-big>>)
     Array(elements) -> {
-      let len = list.length(elements)
-      case len {
-        0 ->
-          // Empty array: ndim=0, has_null=0, elem_oid
-          Ok(<<0:32-big, 0:32-big, elem_oid:32-big>>)
-        _ -> {
-          let has_null = case list.any(elements, fn(e) { e == None }) {
-            True -> 1
-            False -> 0
-          }
-          // Header: ndim=1, has_null, elem_oid, length, lower_bound=1
-          let header = <<
-            1:32-big, has_null:32-big, elem_oid:32-big, len:32-big, 1:32-big,
-          >>
-          case encode_elements(elements, elem_encode, <<>>) {
-            Ok(body) -> Ok(<<header:bits, body:bits>>)
-            Error(e) -> Error(e)
-          }
-        }
+      use dims <- result.try(dimensions(val))
+      use leaves <- result.try(flatten(elements, list.length(dims)))
+      let has_null = case list.contains(leaves, None) {
+        True -> 1
+        False -> 0
       }
+      let dim_headers =
+        list.fold(dims, <<>>, fn(acc, len) {
+          <<acc:bits, len:32-big, 1:32-big>>
+        })
+      use body <- result.try(encode_elements(leaves, elem_encode, <<>>))
+      Ok(<<
+        { list.length(dims) }:32-big,
+        has_null:32-big,
+        elem_oid:32-big,
+        dim_headers:bits,
+        body:bits,
+      >>)
     }
     _ -> Error("array codec: expected Array value")
+  }
+}
+
+/// The dimension lengths of a (possibly nested) array, outermost first.
+/// The first element decides how deep the nesting goes.
+fn dimensions(val: Value) -> Result(List(Int), String) {
+  case val {
+    Array([Some(Array(_) as inner), ..] as elements) -> {
+      use rest <- result.try(dimensions(inner))
+      Ok([list.length(elements), ..rest])
+    }
+    Array(elements) -> Ok([list.length(elements)])
+    _ -> Error("array codec: expected Array value")
+  }
+}
+
+/// Flatten `depth` levels of nesting into the element list, checking that
+/// every sub-array has the same shape.
+fn flatten(
+  elements: List(Option(Value)),
+  depth: Int,
+) -> Result(List(Option(Value)), String) {
+  case depth {
+    1 ->
+      case list.any(elements, is_array) {
+        True -> Error("array codec: sub-arrays must all have the same depth")
+        False -> Ok(elements)
+      }
+    _ -> {
+      use rows <- result.try(
+        list.try_map(elements, fn(e) {
+          case e {
+            Some(Array(inner)) -> Ok(inner)
+            _ -> Error("array codec: sub-arrays must all have the same depth")
+          }
+        }),
+      )
+      let lengths = list.map(rows, list.length) |> list.unique
+      case lengths {
+        [_] -> {
+          use flat <- result.try(list.try_map(rows, flatten(_, depth - 1)))
+          Ok(list.flatten(flat))
+        }
+        _ -> Error("array codec: sub-arrays must all have the same length")
+      }
+    }
+  }
+}
+
+fn is_array(e: Option(Value)) -> Bool {
+  case e {
+    Some(Array(_)) -> True
+    _ -> False
   }
 }
 
@@ -162,27 +221,60 @@ fn encode_elements(
 
 // --- Decode ---
 
+/// PostgreSQL allows at most 6 dimensions.
+const max_dimensions = 6
+
 fn decode_array(
   data: BitArray,
   elem_decode: fn(BitArray) -> Result(Value, String),
 ) -> Result(Value, String) {
   case data {
-    // Empty array (ndim=0)
     <<0:32-big, _has_null:32-big, _elem_oid:32-big>> -> Ok(Array([]))
-    // 1-dimensional array
-    <<
-      1:32-big,
-      _has_null:32-big,
-      _elem_oid:32-big,
-      length:32-big,
-      _lower_bound:32-big,
-      rest:bits,
-    >> ->
-      case decode_elements(rest, length, elem_decode, []) {
-        Ok(elements) -> Ok(Array(list.reverse(elements)))
-        Error(e) -> Error(e)
+    <<ndim:32-big, _has_null:32-big, _elem_oid:32-big, rest:bits>>
+      if ndim >= 1 && ndim <= max_dimensions
+    -> {
+      use #(dims, rest) <- result.try(decode_dims(rest, ndim, []))
+      let total = list.fold(dims, 1, int.multiply)
+      use #(elements, rest) <- result.try(
+        decode_elements(rest, total, elem_decode, []),
+      )
+      case rest {
+        <<>> -> Ok(nest(list.reverse(elements), dims))
+        _ -> Error("array codec: trailing bytes after array data")
       }
+    }
     _ -> Error("array codec: unsupported array format")
+  }
+}
+
+fn decode_dims(
+  data: BitArray,
+  remaining: Int,
+  acc: List(Int),
+) -> Result(#(List(Int), BitArray), String) {
+  case remaining, data {
+    0, _ -> Ok(#(list.reverse(acc), data))
+    _, <<len:32-big, _lower_bound:32-big-signed, rest:bits>> ->
+      decode_dims(rest, remaining - 1, [len, ..acc])
+    _, _ -> Error("array codec: truncated dimension header")
+  }
+}
+
+/// Rebuild nested arrays from the flat element list.
+fn nest(elements: List(Option(Value)), dims: List(Int)) -> Value {
+  case dims {
+    [] | [_] -> Array(elements)
+    [_, ..inner] -> {
+      let size = list.fold(inner, 1, int.multiply)
+      case size {
+        0 -> Array([])
+        _ ->
+          Array(
+            list.sized_chunk(elements, size)
+            |> list.map(fn(chunk) { Some(nest(chunk, inner)) }),
+          )
+      }
+    }
   }
 }
 
@@ -191,15 +283,13 @@ fn decode_elements(
   remaining: Int,
   elem_decode: fn(BitArray) -> Result(Value, String),
   acc: List(Option(Value)),
-) -> Result(List(Option(Value)), String) {
+) -> Result(#(List(Option(Value)), BitArray), String) {
   case remaining {
-    0 -> Ok(acc)
+    0 -> Ok(#(acc, data))
     _ ->
       case data {
-        // NULL element
         <<-1:32-big-signed, rest:bits>> ->
           decode_elements(rest, remaining - 1, elem_decode, [None, ..acc])
-        // Non-NULL element
         <<len:32-big, elem_data:bytes-size(len), rest:bits>> ->
           case elem_decode(elem_data) {
             Ok(val) ->
@@ -213,8 +303,3 @@ fn decode_elements(
       }
   }
 }
-
-// --- Dict insert helper (avoids importing gleam/dict directly) ---
-
-@external(erlang, "maps", "put")
-fn insert_codec(key: Int, codec: Codec, reg: Registry) -> Registry

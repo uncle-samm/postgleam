@@ -1,6 +1,7 @@
 /// PostgreSQL logical replication connection support.
 /// Provides LSN encoding/decoding and a replication connection that can
 /// create replication slots, start streaming, and receive WAL data.
+import gleam/int
 import gleam/option.{None}
 import gleam/result
 import gleam/string
@@ -27,9 +28,9 @@ pub fn encode_lsn(lsn: Int) -> Result(String, Nil) {
   let max_uint64 = 18_446_744_073_709_551_615
   case lsn >= 0 && lsn <= max_uint64 {
     True -> {
-      let file_id = int_shr(lsn, 32)
-      let offset = int_band(lsn, 0xFFFFFFFF)
-      Ok(int_to_hex(file_id) <> "/" <> int_to_hex(offset))
+      let file_id = int.bitwise_shift_right(lsn, 32)
+      let offset = int.bitwise_and(lsn, 0xFFFFFFFF)
+      Ok(int.to_base16(file_id) <> "/" <> int.to_base16(offset))
     }
     False -> Error(Nil)
   }
@@ -46,9 +47,13 @@ pub fn decode_lsn(lsn: String) -> Result(Int, Nil) {
         && string.length(offset_str) <= 8
       {
         True -> {
-          use file_id <- result.try(hex_to_int(file_id_str))
-          use offset <- result.try(hex_to_int(offset_str))
-          Ok(int_bor(int_shl(file_id, 32), offset))
+          use file_id <- result.try(int.base_parse(file_id_str, 16))
+          use offset <- result.try(int.base_parse(offset_str, 16))
+          case file_id >= 0 && offset >= 0 {
+            True ->
+              Ok(int.bitwise_or(int.bitwise_shift_left(file_id, 32), offset))
+            False -> Error(Nil)
+          }
         }
         False -> Error(Nil)
       }
@@ -241,23 +246,3 @@ fn parse_wal_message(data: BitArray) -> Result(WalMessage, Nil) {
     _ -> Error(Nil)
   }
 }
-
-// --- Bitwise operations via Erlang FFI ---
-
-@external(erlang, "postgleam_ffi", "int_shr")
-fn int_shr(a: Int, b: Int) -> Int
-
-@external(erlang, "postgleam_ffi", "int_shl")
-fn int_shl(a: Int, b: Int) -> Int
-
-@external(erlang, "postgleam_ffi", "int_band")
-fn int_band(a: Int, b: Int) -> Int
-
-@external(erlang, "postgleam_ffi", "int_bor")
-fn int_bor(a: Int, b: Int) -> Int
-
-@external(erlang, "postgleam_ffi", "int_to_hex")
-fn int_to_hex(n: Int) -> String
-
-@external(erlang, "postgleam_ffi", "hex_to_int")
-fn hex_to_int(s: String) -> Result(Int, Nil)

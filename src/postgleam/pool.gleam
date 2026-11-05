@@ -1,527 +1,640 @@
-/// Connection pool - manages multiple PostgreSQL connections.
-/// Features: round-robin checkout, health checks, automatic reconnection,
-/// wait queue, and PgBouncer compatibility.
-import gleam/erlang/process.{type Subject}
-import gleam/int
-import gleam/list
-import gleam/option.{type Option, Some}
-import gleam/otp/actor
-import postgleam/codec/defaults
-import postgleam/codec/registry.{type Registry}
-import postgleam/codec/text
-import postgleam/config.{type Config}
-import postgleam/connection.{
-  type ConnectionState, type ExtendedQueryResult, type SimpleQueryResult,
+//// A pool of PostgreSQL connections for running queries concurrently.
+////
+//// Each connection is its own actor, so queries on different connections
+//// run in parallel. A caller checks a connection out, uses it, and checks it
+//// back in; the pool then rolls back anything the caller left open before
+//// handing the connection to the next caller. If no connection is free the
+//// caller waits up to `config.queue_timeout` and then gets `PoolTimeout`.
+////
+//// ```gleam
+//// import postgleam
+//// import postgleam/config
+//// import postgleam/decode
+//// import postgleam/pool
+////
+//// pub fn main() {
+////   let assert Ok(cfg) = config.from_url("postgres://app:secret@localhost/app")
+////   let assert Ok(db) = pool.start(cfg, size: 10)
+////   let assert Ok(response) =
+////     pool.query_with(db, "SELECT $1::int4 + 1", [postgleam.int(41)], {
+////       use n <- decode.element(0, decode.int)
+////       decode.success(n)
+////     })
+////   pool.shutdown(db)
+//// }
+//// ```
+////
+//// The pool also:
+//// - pings connections that have been idle for `config.idle_interval` ms,
+////   reconnecting broken ones before a caller needs them;
+//// - replaces a connection whose actor crashed;
+//// - takes a connection back if the caller holding it exits.
+
+import gleam/bool
+import gleam/dict.{type Dict}
+import gleam/erlang/atom.{type Atom}
+import gleam/erlang/process.{
+  type ExitMessage, type Monitor, type Name, type Pid, type Subject,
 }
+import gleam/list
+import gleam/option.{type Option, None, Some}
+import gleam/otp/actor
+import gleam/otp/supervision
+import gleam/result
+import postgleam.{type Connection, type Param, type Response}
+import postgleam/config.{type Config}
+import postgleam/connection.{type ExtendedQueryResult, type SimpleQueryResult}
 import postgleam/decode.{type RowDecoder}
 import postgleam/error.{type Error}
-import postgleam/value.{type Value}
+import postgleam/internal/call
+import postgleam/internal/connection_actor
 
-/// Monotonic time in milliseconds (for queue timeout tracking).
-@external(erlang, "postgleam_ffi", "monotonic_time_ms")
-fn monotonic_time_ms() -> Int
+/// A handle to a running pool.
+pub opaque type Pool {
+  Pool(subject: Subject(PoolMessage))
+}
 
-/// Pool message type
-pub type PoolMessage {
-  /// Execute a parameterized query
-  Execute(
-    fun: fn(ConnectionState, Registry, Config) ->
-      #(Result(ExtendedQueryResult, Error), ConnectionState),
-    reply: Subject(Result(ExtendedQueryResult, Error)),
-  )
-  /// Execute a simple query
-  SimpleExecute(
-    fun: fn(ConnectionState, Config) ->
-      #(Result(List(SimpleQueryResult), Error), ConnectionState),
-    reply: Subject(Result(List(SimpleQueryResult), Error)),
-  )
-  /// Shutdown the pool
+/// Messages the pool process handles. Only needed to name a pool (see
+/// `supervised`).
+pub opaque type PoolMessage {
+  Checkout(caller: Pid, reply: Subject(Result(#(Int, Connection), Error)))
+  Checkin(id: Int)
+  ResetDone(id: Int)
+  CallerDown(process.Down)
+  ConnectionExit(ExitMessage)
+  ExpireWaiters
+  PingIdle
+  Replenish
+  GetStats(reply: Subject(Result(Stats, Error)))
   Shutdown(reply: Subject(Nil))
-  /// Internal: periodic health check
-  HealthCheck
-  /// Internal: reconnect a slot
-  Reconnect(index: Int)
 }
 
-/// Connection slot state
-type ConnectionSlot {
-  /// Active and available for queries
-  Active(conn: ConnectionState)
-  /// Currently checked out (executing a query)
-  CheckedOut(conn: ConnectionState)
-  /// Dead, attempting to reconnect
-  Reconnecting(attempts: Int)
+type Slot {
+  Slot(conn: Connection, pid: Pid, status: SlotStatus)
 }
 
-/// Queued request waiting for a connection
-type QueuedExecute {
-  QueuedExecute(
-    fun: fn(ConnectionState, Registry, Config) ->
-      #(Result(ExtendedQueryResult, Error), ConnectionState),
-    reply: Subject(Result(ExtendedQueryResult, Error)),
-    enqueued_at: Int,
+type SlotStatus {
+  /// Free since the given monotonic time (ms).
+  Idle(since: Int)
+  /// Checked out by the process behind `monitor`.
+  Busy(monitor: Monitor)
+  /// Checked in; waiting for the connection to roll back leftovers.
+  Resetting
+}
+
+type Waiter {
+  Waiter(
+    caller: Pid,
+    monitor: Monitor,
+    reply: Subject(Result(#(Int, Connection), Error)),
+    deadline: Int,
   )
 }
 
-type QueuedSimple {
-  QueuedSimple(
-    fun: fn(ConnectionState, Config) ->
-      #(Result(List(SimpleQueryResult), Error), ConnectionState),
-    reply: Subject(Result(List(SimpleQueryResult), Error)),
-    enqueued_at: Int,
-  )
-}
-
-type QueuedRequest {
-  QueuedExec(req: QueuedExecute)
-  QueuedSimp(req: QueuedSimple)
-}
-
-/// Pool state
-type PoolState {
-  PoolState(
-    slots: List(ConnectionSlot),
+type State {
+  State(
     config: Config,
-    registry: Registry,
     size: Int,
     self: Subject(PoolMessage),
-    queue: List(QueuedRequest),
+    slots: Dict(Int, Slot),
+    /// Waiting callers, oldest first.
+    waiters: List(Waiter),
+    next_id: Int,
+    /// Number of connections that crashed and could not be replaced yet.
+    missing: Int,
   )
 }
 
-/// Start a connection pool with the given config and size
-pub fn start(
-  config: Config,
-  size: Int,
-) -> Result(actor.Started(Subject(PoolMessage)), String) {
-  case
-    actor.new_with_initialiser(
-      config.connect_timeout * size + 5000,
-      fn(subject) {
-        case connect_pool(config, size, []) {
-          Ok(conns) -> {
-            let reg = defaults.build_registry()
-            // Auto-discover custom enum types and register them
-            let #(reg, conns) = discover_enum_types(conns, reg, config)
-            let slots = list.map(conns, fn(c) { Active(c) })
-            let state =
-              PoolState(
-                slots: slots,
-                config: config,
-                registry: reg,
-                size: size,
-                self: subject,
-                queue: [],
-              )
-            // Schedule first health check
-            let _ =
-              process.send_after(subject, config.idle_interval, HealthCheck)
-            actor.initialised(state)
-            |> actor.returning(subject)
-            |> Ok
-          }
-          Error(e) -> Error(error_to_string(e))
-        }
-      },
-    )
-    |> actor.on_message(handle_message)
-    |> actor.start()
-  {
-    Ok(started) -> Ok(started)
-    Error(actor.InitTimeout) -> Error("Pool initialization timed out")
-    Error(actor.InitFailed(reason)) -> Error(reason)
-    Error(actor.InitExited(_)) -> Error("Pool process exited during init")
+/// Start a pool of `size` connections. All connections are opened before
+/// this returns, so a bad config or an unreachable server fails here. The
+/// pool is linked to the calling process.
+pub fn start(config: Config, size size: Int) -> Result(Pool, Error) {
+  // A failed initialiser can only return a string; the typed error comes
+  // back on this subject.
+  let errors = process.new_subject()
+  case builder(config, size, Some(errors)) |> actor.start {
+    Ok(started) -> Ok(started.data)
+    Error(actor.InitFailed(reason)) ->
+      case process.receive(errors, 0) {
+        Ok(e) -> Error(e)
+        Error(Nil) -> Error(error.ConnectionError(reason))
+      }
+    Error(e) -> Error(start_error(e))
   }
 }
 
-fn connect_pool(
+/// A child specification for running the pool under a supervisor, registered
+/// under `name`. Get a handle with `named(name)`.
+///
+/// ```gleam
+/// let name = process.new_name("db")
+/// let assert Ok(_) =
+///   static_supervisor.new(static_supervisor.OneForOne)
+///   |> static_supervisor.add(pool.supervised(cfg, 10, name))
+///   |> static_supervisor.start
+/// let db = pool.named(name)
+/// ```
+pub fn supervised(
+  config: Config,
+  size: Int,
+  name: Name(PoolMessage),
+) -> supervision.ChildSpecification(Pool) {
+  supervision.worker(fn() {
+    builder(config, size, None)
+    |> actor.named(name)
+    |> actor.start
+  })
+}
+
+/// A handle to the pool registered under `name` by `supervised`.
+pub fn named(name: Name(PoolMessage)) -> Pool {
+  Pool(process.named_subject(name))
+}
+
+fn builder(
+  config: Config,
+  size: Int,
+  errors: Option(Subject(Error)),
+) -> actor.Builder(State, PoolMessage, Pool) {
+  let init_timeout = size * { config.connect_timeout + 1000 } + 1000
+  actor.new_with_initialiser(init_timeout, fn(subject) {
+    use config <- result.try(
+      config.validate(config)
+      |> result.map_error(fn(reason) {
+        report(errors, error.ConnectionError(reason))
+      }),
+    )
+    use <- bool.lazy_guard(size < 1, fn() {
+      Error(report(
+        errors,
+        error.ConnectionError("Pool size must be at least 1"),
+      ))
+    })
+    // Connections are linked to the pool; trap their exits so one crashing
+    // connection is replaced instead of taking the pool down.
+    process.trap_exits(True)
+    use slots <- result.try(
+      open_slots(config, size, 0, dict.new())
+      |> result.map_error(report(errors, _)),
+    )
+    // Internal messages (timers, reset callbacks) use a pid-based subject:
+    // sending to a named subject panics once the name is unregistered.
+    let internal = process.new_subject()
+    let state =
+      State(
+        config:,
+        size:,
+        self: internal,
+        slots:,
+        waiters: [],
+        next_id: size,
+        missing: 0,
+      )
+    process.send_after(internal, config.idle_interval, PingIdle)
+    let selector =
+      process.new_selector()
+      |> process.select(subject)
+      |> process.select(internal)
+      |> process.select_monitors(CallerDown)
+      |> process.select_trapped_exits(ConnectionExit)
+    actor.initialised(state)
+    |> actor.selecting(selector)
+    |> actor.returning(Pool(subject))
+    |> Ok
+  })
+  |> actor.on_message(handle_message)
+}
+
+/// Hand a start failure to `start` (if it is waiting) and describe it for
+/// the actor API.
+fn report(errors: Option(Subject(Error)), e: Error) -> String {
+  case errors {
+    Some(errors) -> process.send(errors, e)
+    None -> Nil
+  }
+  error.to_string(e)
+}
+
+fn open_slots(
   config: Config,
   remaining: Int,
-  acc: List(ConnectionState),
-) -> Result(List(ConnectionState), Error) {
+  id: Int,
+  slots: Dict(Int, Slot),
+) -> Result(Dict(Int, Slot), Error) {
   case remaining {
-    0 -> Ok(acc)
+    0 -> Ok(slots)
     _ ->
-      case connection.connect(config) {
-        Ok(conn) -> connect_pool(config, remaining - 1, [conn, ..acc])
+      case connection_actor.start(config) {
+        Ok(started) -> {
+          let slot = new_slot(started, config)
+          open_slots(
+            config,
+            remaining - 1,
+            id + 1,
+            dict.insert(slots, id, slot),
+          )
+        }
         Error(e) -> {
-          disconnect_all_conns(acc)
+          dict.each(slots, fn(_, slot) { stop_connection(slot) })
           Error(e)
         }
       }
   }
 }
 
-/// Query pg_type for custom enum types and register their OIDs with
-/// the text codec. Enums are text-representable on the wire — their
-/// binary format is the enum label as UTF-8, identical to the text codec.
-fn discover_enum_types(
-  conns: List(ConnectionState),
-  reg: Registry,
+fn new_slot(
+  started: actor.Started(Subject(connection_actor.Message)),
   config: Config,
-) -> #(Registry, List(ConnectionState)) {
-  case conns {
-    [first, ..rest] -> {
-      case
-        connection.simple_query(
-          first,
-          "SELECT oid::text FROM pg_type WHERE typtype = 'e'",
-          config.timeout,
-        )
-      {
-        Ok(#(results, updated_first)) -> {
-          let reg = case results {
-            [result, ..] ->
-              list.fold(result.rows, reg, fn(reg, row) {
-                case row {
-                  [Some(oid_str), ..] ->
-                    case int.parse(oid_str) {
-                      Ok(oid) -> registry.register(reg, oid, text.matcher())
-                      Error(_) -> reg
-                    }
-                  _ -> reg
-                }
-              })
-            _ -> reg
-          }
-          #(reg, [updated_first, ..rest])
-        }
-        // If discovery fails, proceed with the base registry
-        Error(_) -> #(reg, conns)
-      }
-    }
-    [] -> #(reg, conns)
-  }
-}
-
-fn disconnect_all_conns(conns: List(ConnectionState)) -> Nil {
-  case conns {
-    [] -> Nil
-    [conn, ..rest] -> {
-      connection.disconnect(conn)
-      disconnect_all_conns(rest)
-    }
-  }
+) -> Slot {
+  Slot(
+    conn: postgleam.from_actor(started.data, started.pid, config),
+    pid: started.pid,
+    status: Idle(since: now()),
+  )
 }
 
 fn handle_message(
-  state: PoolState,
+  state: State,
   msg: PoolMessage,
-) -> actor.Next(PoolState, PoolMessage) {
+) -> actor.Next(State, PoolMessage) {
   case msg {
-    Execute(fun, reply) -> {
-      case find_available(state.slots, 0) {
-        Ok(#(index, conn)) -> {
-          let #(result, conn) = fun(conn, state.registry, state.config)
-          let is_dead = is_socket_error(result)
-          process.send(reply, result)
-          case is_dead {
-            True -> {
-              let slots = set_slot(state.slots, index, Reconnecting(0))
-              let _ = process.send_after(state.self, 0, Reconnect(index))
-              actor.continue(PoolState(..state, slots: slots))
-            }
-            False -> {
-              let slots = set_slot(state.slots, index, Active(conn))
-              actor.continue(PoolState(..state, slots: slots))
-            }
-          }
-        }
-        Error(_) -> {
-          // No available connections — enqueue
-          let now = monotonic_time_ms()
-          let req =
-            QueuedExec(QueuedExecute(fun: fun, reply: reply, enqueued_at: now))
-          actor.continue(PoolState(..state, queue: append(state.queue, [req])))
+    Checkout(caller, reply) -> {
+      let monitor = process.monitor(caller)
+      let waiter =
+        Waiter(
+          caller:,
+          monitor:,
+          reply:,
+          deadline: now() + state.config.queue_timeout,
+        )
+      case take_idle(state) {
+        Ok(#(id, slot)) -> actor.continue(grant(state, id, slot, waiter))
+        Error(Nil) -> {
+          process.send_after(
+            state.self,
+            state.config.queue_timeout,
+            ExpireWaiters,
+          )
+          actor.continue(
+            State(..state, waiters: list.append(state.waiters, [waiter])),
+          )
         }
       }
     }
 
-    SimpleExecute(fun, reply) -> {
-      case find_available(state.slots, 0) {
-        Ok(#(index, conn)) -> {
-          let #(result, conn) = fun(conn, state.config)
-          let is_dead = is_simple_socket_error(result)
-          process.send(reply, result)
-          case is_dead {
-            True -> {
-              let slots = set_slot(state.slots, index, Reconnecting(0))
-              let _ = process.send_after(state.self, 0, Reconnect(index))
-              actor.continue(PoolState(..state, slots: slots))
-            }
-            False -> {
-              let slots = set_slot(state.slots, index, Active(conn))
-              actor.continue(PoolState(..state, slots: slots))
+    Checkin(id) ->
+      case dict.get(state.slots, id) {
+        Ok(Slot(status: Busy(monitor), ..) as slot) -> {
+          process.demonitor_process(monitor)
+          actor.continue(begin_reset(state, id, slot))
+        }
+        // Unknown id (the connection crashed meanwhile) or a double
+        // check-in: nothing to do.
+        _ -> actor.continue(state)
+      }
+
+    ResetDone(id) ->
+      case dict.get(state.slots, id) {
+        Ok(Slot(status: Resetting, ..) as slot) ->
+          actor.continue(release(state, id, slot))
+        _ -> actor.continue(state)
+      }
+
+    CallerDown(process.ProcessDown(monitor:, ..)) ->
+      actor.continue(caller_down(state, monitor))
+    CallerDown(process.PortDown(..)) -> actor.continue(state)
+
+    ConnectionExit(process.ExitMessage(pid, reason)) ->
+      case find_slot_by_pid(state, pid) {
+        Ok(id) -> actor.continue(replace_connection(state, id))
+        Error(Nil) ->
+          case reason {
+            // A linked process (such as the one that started the pool)
+            // finished normally: links ignore that, so do we.
+            process.Normal -> actor.continue(state)
+            _ -> {
+              stop_all(state)
+              actor.stop_abnormal("pool: linked process exited")
             }
           }
-        }
-        Error(_) -> {
-          let now = monotonic_time_ms()
-          let req =
-            QueuedSimp(QueuedSimple(fun: fun, reply: reply, enqueued_at: now))
-          actor.continue(PoolState(..state, queue: append(state.queue, [req])))
-        }
       }
+
+    ExpireWaiters -> actor.continue(expire_waiters(state))
+
+    PingIdle -> {
+      let cutoff = now() - state.config.idle_interval
+      dict.each(state.slots, fn(_, slot) {
+        case slot.status {
+          Idle(since) if since <= cutoff ->
+            process.send(postgleam.subject(slot.conn), connection_actor.Ping)
+          _ -> Nil
+        }
+      })
+      let slots =
+        dict.map_values(state.slots, fn(_, slot) {
+          case slot.status {
+            Idle(since) if since <= cutoff -> Slot(..slot, status: Idle(now()))
+            _ -> slot
+          }
+        })
+      process.send_after(state.self, state.config.idle_interval, PingIdle)
+      actor.continue(State(..state, slots:))
     }
 
-    HealthCheck -> {
-      // Ping idle connections, mark dead ones for reconnection
-      let state = health_check_slots(state, state.slots, 0, [])
-      // Expire timed-out queue entries
-      let state = expire_queue(state)
-      // Schedule next health check
-      let _ =
-        process.send_after(state.self, state.config.idle_interval, HealthCheck)
+    Replenish -> actor.continue(replenish(state))
+
+    GetStats(reply) -> {
+      let count = fn(pred) {
+        dict.values(state.slots) |> list.count(fn(slot) { pred(slot.status) })
+      }
+      process.send(
+        reply,
+        Ok(Stats(
+          size: state.size,
+          idle: count(is_idle),
+          busy: count(fn(s) { !is_idle(s) }),
+          waiting: list.length(state.waiters),
+        )),
+      )
       actor.continue(state)
     }
 
-    Reconnect(index) -> {
-      case get_slot(state.slots, index) {
-        Ok(Reconnecting(attempts)) -> {
-          case connection.connect(state.config) {
-            Ok(conn) -> {
-              // Reconnected — try to drain queue
-              let state =
-                PoolState(
-                  ..state,
-                  slots: set_slot(state.slots, index, Active(conn)),
-                )
-              let state = drain_queue(state)
-              actor.continue(state)
-            }
-            Error(_) -> {
-              // Exponential backoff: 1s, 2s, 4s, 8s, ... max 30s
-              let delay = int.min(30_000, pow2(attempts) * 1000)
-              let _ = process.send_after(state.self, delay, Reconnect(index))
-              let slots =
-                set_slot(state.slots, index, Reconnecting(attempts + 1))
-              actor.continue(PoolState(..state, slots: slots))
-            }
-          }
-        }
-        _ -> actor.continue(state)
-      }
-    }
-
     Shutdown(reply) -> {
-      // Reject all queued requests
-      reject_queue(state.queue)
-      // Disconnect all active connections
-      disconnect_all_slots(state.slots)
+      stop_all(state)
       process.send(reply, Nil)
       actor.stop()
     }
   }
 }
 
-// =============================================================================
-// Slot management
-// =============================================================================
-
-fn find_available(
-  slots: List(ConnectionSlot),
-  index: Int,
-) -> Result(#(Int, ConnectionState), Nil) {
-  case slots {
-    [] -> Error(Nil)
-    [Active(conn), ..] -> Ok(#(index, conn))
-    [_, ..rest] -> find_available(rest, index + 1)
-  }
-}
-
-fn get_slot(
-  slots: List(ConnectionSlot),
-  index: Int,
-) -> Result(ConnectionSlot, Nil) {
-  case slots, index {
-    [], _ -> Error(Nil)
-    [slot, ..], 0 -> Ok(slot)
-    [_, ..rest], n -> get_slot(rest, n - 1)
-  }
-}
-
-fn set_slot(
-  slots: List(ConnectionSlot),
-  index: Int,
-  value: ConnectionSlot,
-) -> List(ConnectionSlot) {
-  case slots, index {
-    [], _ -> []
-    [_, ..rest], 0 -> [value, ..rest]
-    [slot, ..rest], n -> [slot, ..set_slot(rest, n - 1, value)]
-  }
-}
-
-// =============================================================================
-// Health checks
-// =============================================================================
-
-fn health_check_slots(
-  state: PoolState,
-  slots: List(ConnectionSlot),
-  index: Int,
-  acc: List(ConnectionSlot),
-) -> PoolState {
-  case slots {
-    [] -> PoolState(..state, slots: list.reverse(acc))
-    [Active(conn), ..rest] -> {
-      // Ping with SELECT 1
-      case connection.simple_query(conn, "SELECT 1", state.config.timeout) {
-        Ok(#(_, conn)) ->
-          health_check_slots(state, rest, index + 1, [Active(conn), ..acc])
-        Error(_) -> {
-          // Dead — schedule reconnect
-          let _ = process.send_after(state.self, 0, Reconnect(index))
-          health_check_slots(state, rest, index + 1, [Reconnecting(0), ..acc])
-        }
-      }
-    }
-    [slot, ..rest] -> health_check_slots(state, rest, index + 1, [slot, ..acc])
-  }
-}
-
-// =============================================================================
-// Queue management
-// =============================================================================
-
-fn expire_queue(state: PoolState) -> PoolState {
-  let now = monotonic_time_ms()
-  let timeout = state.config.queue_timeout
-  let #(alive, expired) =
-    list.partition(state.queue, fn(req) {
-      let enqueued = case req {
-        QueuedExec(r) -> r.enqueued_at
-        QueuedSimp(r) -> r.enqueued_at
-      }
-      now - enqueued < timeout
-    })
-  // Reject expired requests
-  list.each(expired, fn(req) {
-    case req {
-      QueuedExec(r) -> process.send(r.reply, Error(error.TimeoutError))
-      QueuedSimp(r) -> process.send(r.reply, Error(error.TimeoutError))
+/// Take the free connection that has been idle longest.
+fn take_idle(state: State) -> Result(#(Int, Slot), Nil) {
+  dict.fold(state.slots, Error(Nil), fn(best, id, slot) {
+    case slot.status, best {
+      Idle(since), Ok(#(_, Slot(status: Idle(best_since), ..)))
+        if since < best_since
+      -> Ok(#(id, slot))
+      Idle(_), Error(Nil) -> Ok(#(id, slot))
+      _, _ -> best
     }
   })
-  PoolState(..state, queue: alive)
 }
 
-fn drain_queue(state: PoolState) -> PoolState {
-  case state.queue {
-    [] -> state
-    [first, ..rest] -> {
-      let now = monotonic_time_ms()
-      case first {
-        QueuedExec(req) -> {
-          case now - req.enqueued_at >= state.config.queue_timeout {
-            True -> {
-              process.send(req.reply, Error(error.TimeoutError))
-              drain_queue(PoolState(..state, queue: rest))
-            }
-            False -> {
-              case find_available(state.slots, 0) {
-                Ok(#(index, conn)) -> {
-                  let #(result, conn) =
-                    req.fun(conn, state.registry, state.config)
-                  let is_dead = is_socket_error(result)
-                  process.send(req.reply, result)
-                  case is_dead {
-                    True -> {
-                      let slots = set_slot(state.slots, index, Reconnecting(0))
-                      let _ =
-                        process.send_after(state.self, 0, Reconnect(index))
-                      drain_queue(PoolState(..state, slots: slots, queue: rest))
-                    }
-                    False -> {
-                      let slots = set_slot(state.slots, index, Active(conn))
-                      drain_queue(PoolState(..state, slots: slots, queue: rest))
-                    }
-                  }
-                }
-                Error(_) -> state
-              }
-            }
-          }
+fn grant(state: State, id: Int, slot: Slot, waiter: Waiter) -> State {
+  process.send(waiter.reply, Ok(#(id, slot.conn)))
+  let slot = Slot(..slot, status: Busy(waiter.monitor))
+  State(..state, slots: dict.insert(state.slots, id, slot))
+}
+
+/// Ask the connection to roll back whatever its last user left open; it
+/// reports back with `ResetDone`.
+fn begin_reset(state: State, id: Int, slot: Slot) -> State {
+  let pool = state.self
+  process.send(
+    postgleam.subject(slot.conn),
+    connection_actor.Reset(fn(_healthy) { process.send(pool, ResetDone(id)) }),
+  )
+  let slot = Slot(..slot, status: Resetting)
+  State(..state, slots: dict.insert(state.slots, id, slot))
+}
+
+/// A connection is free again: give it to the oldest waiter, if any.
+fn release(state: State, id: Int, slot: Slot) -> State {
+  case state.waiters {
+    [waiter, ..rest] -> grant(State(..state, waiters: rest), id, slot, waiter)
+    [] -> {
+      let slot = Slot(..slot, status: Idle(since: now()))
+      State(..state, slots: dict.insert(state.slots, id, slot))
+    }
+  }
+}
+
+fn caller_down(state: State, monitor: Monitor) -> State {
+  let holder =
+    dict.to_list(state.slots)
+    |> list.find(fn(entry) {
+      case entry.1.status {
+        Busy(m) -> m == monitor
+        _ -> False
+      }
+    })
+  case holder {
+    Ok(#(id, slot)) -> begin_reset(state, id, slot)
+    Error(Nil) ->
+      State(
+        ..state,
+        waiters: list.filter(state.waiters, fn(w) { w.monitor != monitor }),
+      )
+  }
+}
+
+fn expire_waiters(state: State) -> State {
+  let now = now()
+  let #(expired, waiting) =
+    list.partition(state.waiters, fn(w) { w.deadline <= now })
+  list.each(expired, fn(w) {
+    process.demonitor_process(w.monitor)
+    process.send(w.reply, Error(error.PoolTimeout))
+  })
+  State(..state, waiters: waiting)
+}
+
+fn find_slot_by_pid(state: State, pid: Pid) -> Result(Int, Nil) {
+  dict.to_list(state.slots)
+  |> list.find(fn(entry) { { entry.1 }.pid == pid })
+  |> result.map(fn(entry) { entry.0 })
+}
+
+/// A connection actor crashed. Its holder (if any) sees errors on its next
+/// call; the pool forgets it and starts a replacement.
+fn replace_connection(state: State, id: Int) -> State {
+  case dict.get(state.slots, id) {
+    Ok(Slot(status: Busy(monitor), ..)) -> process.demonitor_process(monitor)
+    _ -> Nil
+  }
+  State(
+    ..state,
+    slots: dict.delete(state.slots, id),
+    missing: state.missing + 1,
+  )
+  |> replenish
+}
+
+/// Start replacements for crashed connections. They connect on first use,
+/// so this never blocks the pool on the network.
+fn replenish(state: State) -> State {
+  case state.missing {
+    0 -> state
+    _ ->
+      case connection_actor.start_lazy(state.config) {
+        Ok(started) -> {
+          let id = state.next_id
+          let slot = new_slot(started, state.config)
+          let state =
+            State(
+              ..state,
+              slots: dict.insert(state.slots, id, slot),
+              next_id: id + 1,
+              missing: state.missing - 1,
+            )
+          replenish(release(state, id, slot))
         }
-        QueuedSimp(req) -> {
-          case now - req.enqueued_at >= state.config.queue_timeout {
-            True -> {
-              process.send(req.reply, Error(error.TimeoutError))
-              drain_queue(PoolState(..state, queue: rest))
-            }
-            False -> {
-              case find_available(state.slots, 0) {
-                Ok(#(index, conn)) -> {
-                  let #(result, conn) = req.fun(conn, state.config)
-                  let is_dead = is_simple_socket_error(result)
-                  process.send(req.reply, result)
-                  case is_dead {
-                    True -> {
-                      let slots = set_slot(state.slots, index, Reconnecting(0))
-                      let _ =
-                        process.send_after(state.self, 0, Reconnect(index))
-                      drain_queue(PoolState(..state, slots: slots, queue: rest))
-                    }
-                    False -> {
-                      let slots = set_slot(state.slots, index, Active(conn))
-                      drain_queue(PoolState(..state, slots: slots, queue: rest))
-                    }
-                  }
-                }
-                Error(_) -> state
-              }
-            }
-          }
+        Error(_) -> {
+          process.send_after(state.self, 1000, Replenish)
+          state
         }
       }
-    }
   }
 }
 
-fn reject_queue(queue: List(QueuedRequest)) -> Nil {
-  case queue {
-    [] -> Nil
-    [QueuedExec(r), ..rest] -> {
-      process.send(r.reply, Error(error.ConnectionError("Pool shutting down")))
-      reject_queue(rest)
-    }
-    [QueuedSimp(r), ..rest] -> {
-      process.send(r.reply, Error(error.ConnectionError("Pool shutting down")))
-      reject_queue(rest)
-    }
-  }
+fn stop_all(state: State) -> Nil {
+  list.each(state.waiters, fn(w) {
+    process.send(
+      w.reply,
+      Error(error.ConnectionError("The pool is shutting down")),
+    )
+  })
+  dict.each(state.slots, fn(_, slot) { stop_connection(slot) })
 }
 
-fn disconnect_all_slots(slots: List(ConnectionSlot)) -> Nil {
-  case slots {
-    [] -> Nil
-    [Active(conn), ..rest] -> {
-      connection.disconnect(conn)
-      disconnect_all_slots(rest)
-    }
-    [CheckedOut(conn), ..rest] -> {
-      connection.disconnect(conn)
-      disconnect_all_slots(rest)
-    }
-    [Reconnecting(_), ..rest] -> disconnect_all_slots(rest)
-  }
+fn stop_connection(slot: Slot) -> Nil {
+  process.send(
+    postgleam.subject(slot.conn),
+    connection_actor.Disconnect(process.new_subject()),
+  )
 }
 
 // =============================================================================
-// Error detection
+// Using the pool
 // =============================================================================
 
-fn is_socket_error(result: Result(ExtendedQueryResult, Error)) -> Bool {
-  case result {
-    Error(error.SocketError(_)) -> True
-    _ -> False
+/// Check out a connection, run `f` with it, and check it back in. The
+/// connection must not be used after `f` returns. Anything `f` leaves open
+/// (such as a transaction) is rolled back before the next caller gets the
+/// connection. If the calling process exits while holding the connection,
+/// the pool takes it back.
+pub fn with_connection(
+  pool: Pool,
+  f: fn(Connection) -> Result(a, Error),
+) -> Result(a, Error) {
+  use #(id, conn) <- result.try(checkout(pool))
+  let result = f(conn)
+  process.send(pool.subject, Checkin(id))
+  result
+}
+
+fn checkout(pool: Pool) -> Result(#(Int, Connection), Error) {
+  // The pool always answers within queue_timeout, so there is no deadline
+  // here; the monitor covers the pool going away.
+  call.call(
+    pool.subject,
+    Checkout(process.self(), _),
+    call.UntilReplyOrExit,
+    Error(not_running()),
+    Error(error.PoolTimeout),
+  )
+}
+
+fn not_running() -> Error {
+  error.ConnectionError("The pool is not running")
+}
+
+/// Run a parameterized query on a pooled connection.
+pub fn query(
+  pool: Pool,
+  sql: String,
+  params: List(Param),
+) -> Result(ExtendedQueryResult, Error) {
+  with_connection(pool, postgleam.query(_, sql, params))
+}
+
+/// Run a parameterized query on a pooled connection and decode each row.
+pub fn query_with(
+  pool: Pool,
+  sql: String,
+  params: List(Param),
+  decoder: RowDecoder(a),
+) -> Result(Response(a), Error) {
+  with_connection(pool, postgleam.query_with(_, sql, params, decoder))
+}
+
+/// Run a query and decode the first row. Errors if there are no rows.
+pub fn query_one(
+  pool: Pool,
+  sql: String,
+  params: List(Param),
+  decoder: RowDecoder(a),
+) -> Result(a, Error) {
+  with_connection(pool, postgleam.query_one(_, sql, params, decoder))
+}
+
+/// Run one statement with several parameter sets in one round trip.
+pub fn query_batch(
+  pool: Pool,
+  sql: String,
+  param_sets: List(List(Param)),
+) -> Result(List(ExtendedQueryResult), Error) {
+  with_connection(pool, postgleam.query_batch(_, sql, param_sets))
+}
+
+/// Run a simple (text protocol) query on a pooled connection.
+pub fn simple_query(
+  pool: Pool,
+  sql: String,
+) -> Result(List(SimpleQueryResult), Error) {
+  with_connection(pool, postgleam.simple_query(_, sql))
+}
+
+/// Run `f` in a transaction on one pooled connection. See
+/// `postgleam.transaction`.
+pub fn transaction(
+  pool: Pool,
+  f: fn(Connection) -> Result(a, e),
+) -> Result(a, postgleam.TransactionError(e)) {
+  case checkout(pool) {
+    Error(e) -> Error(postgleam.TransactionFailed(e))
+    Ok(#(id, conn)) -> {
+      let result = postgleam.transaction(conn, f)
+      process.send(pool.subject, Checkin(id))
+      result
+    }
   }
 }
 
-fn is_simple_socket_error(
-  result: Result(List(SimpleQueryResult), Error),
-) -> Bool {
-  case result {
-    Error(error.SocketError(_)) -> True
+/// Stop the pool and close all its connections. Callers still holding a
+/// connection get errors on their next call.
+pub fn shutdown(pool: Pool) -> Nil {
+  call.call(pool.subject, Shutdown, call.Within(10_000), Nil, Nil)
+}
+
+/// A snapshot of the pool, for monitoring.
+pub type Stats {
+  Stats(
+    /// Configured number of connections.
+    size: Int,
+    /// Connections free right now.
+    idle: Int,
+    /// Connections checked out (or being reset after check-in).
+    busy: Int,
+    /// Callers waiting for a connection.
+    waiting: Int,
+  )
+}
+
+/// Get a snapshot of the pool's state.
+pub fn stats(pool: Pool) -> Result(Stats, Error) {
+  call.call(
+    pool.subject,
+    GetStats,
+    call.UntilReplyOrExit,
+    Error(not_running()),
+    Error(error.PoolTimeout),
+  )
+}
+
+fn is_idle(status: SlotStatus) -> Bool {
+  case status {
+    Idle(_) -> True
     _ -> False
   }
 }
@@ -530,133 +643,21 @@ fn is_simple_socket_error(
 // Helpers
 // =============================================================================
 
-fn pow2(n: Int) -> Int {
-  case n {
-    0 -> 1
-    _ -> 2 * pow2(n - 1)
+fn start_error(e: actor.StartError) -> Error {
+  error.ConnectionError(start_error_message(e))
+}
+
+fn start_error_message(e: actor.StartError) -> String {
+  case e {
+    actor.InitTimeout -> "Initialization timed out"
+    actor.InitFailed(reason) -> reason
+    actor.InitExited(_) -> "Process exited during initialization"
   }
 }
 
-fn append(a: List(x), b: List(x)) -> List(x) {
-  case a {
-    [] -> b
-    [x, ..rest] -> [x, ..append(rest, b)]
-  }
+fn now() -> Int {
+  monotonic_time(atom.create("millisecond"))
 }
 
-fn error_to_string(err: Error) -> String {
-  case err {
-    error.PgError(fields, _, _) -> "PostgreSQL error: " <> fields.message
-    error.ConnectionError(msg) -> msg
-    error.AuthenticationError(msg) -> msg
-    error.EncodeError(msg) -> msg
-    error.DecodeError(msg) -> msg
-    error.ProtocolError(msg) -> msg
-    error.SocketError(msg) -> msg
-    error.TimeoutError -> "Timeout"
-  }
-}
-
-// =============================================================================
-// Public API helpers for use with the pool
-// =============================================================================
-
-/// Execute a parameterized query through the pool.
-/// Uses PgBouncer-safe unnamed statements when pgbouncer mode is enabled.
-pub fn query(
-  pool: Subject(PoolMessage),
-  sql: String,
-  params: List(Option(Value)),
-  timeout: Int,
-) -> Result(ExtendedQueryResult, Error) {
-  process.call(pool, timeout, fn(reply) {
-    Execute(
-      fn(conn, reg, config) {
-        let result = case config.pgbouncer {
-          True ->
-            connection.extended_query_unnamed(
-              conn,
-              sql,
-              params,
-              reg,
-              config.timeout,
-            )
-          False ->
-            connection.extended_query(conn, sql, params, reg, config.timeout)
-        }
-        case result {
-          Ok(#(r, c)) -> #(Ok(r), c)
-          Error(e) -> #(Error(e), conn)
-        }
-      },
-      reply,
-    )
-  })
-}
-
-/// Execute a simple query through the pool
-pub fn simple_query(
-  pool: Subject(PoolMessage),
-  sql: String,
-  timeout: Int,
-) -> Result(List(SimpleQueryResult), Error) {
-  process.call(pool, timeout, fn(reply) {
-    SimpleExecute(
-      fn(conn, config) {
-        case connection.simple_query(conn, sql, config.timeout) {
-          Ok(#(results, conn)) -> #(Ok(results), conn)
-          Error(e) -> #(Error(e), conn)
-        }
-      },
-      reply,
-    )
-  })
-}
-
-/// Execute a parameterized query through the pool and decode rows.
-pub fn query_with(
-  pool: Subject(PoolMessage),
-  sql: String,
-  params: List(Option(Value)),
-  decoder: RowDecoder(a),
-  timeout: Int,
-) -> Result(PoolResponse(a), Error) {
-  case query(pool, sql, params, timeout) {
-    Ok(result) ->
-      case decode_rows(result.rows, decoder, []) {
-        Ok(decoded) ->
-          Ok(PoolResponse(
-            rows: decoded,
-            count: list.length(decoded),
-            tag: result.tag,
-          ))
-        Error(e) -> Error(e)
-      }
-    Error(e) -> Error(e)
-  }
-}
-
-/// Result from a decoded pool query.
-pub type PoolResponse(a) {
-  PoolResponse(rows: List(a), count: Int, tag: String)
-}
-
-/// Shut down the pool, disconnecting all connections
-pub fn shutdown(pool: Subject(PoolMessage), timeout: Int) -> Nil {
-  process.call(pool, timeout, fn(reply) { Shutdown(reply) })
-}
-
-fn decode_rows(
-  rows: List(List(Option(Value))),
-  decoder: RowDecoder(a),
-  acc: List(a),
-) -> Result(List(a), Error) {
-  case rows {
-    [] -> Ok(list.reverse(acc))
-    [row, ..rest] ->
-      case decode.run(decoder, row) {
-        Ok(val) -> decode_rows(rest, decoder, [val, ..acc])
-        Error(e) -> Error(e)
-      }
-  }
-}
+@external(erlang, "erlang", "monotonic_time")
+fn monotonic_time(unit: Atom) -> Int

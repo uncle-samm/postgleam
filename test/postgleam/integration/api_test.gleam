@@ -12,6 +12,7 @@ import postgleam/value
 
 fn test_config() {
   config.default()
+  |> config.password("postgres")
   |> config.database("postgleam_test")
 }
 
@@ -179,13 +180,13 @@ pub fn transaction_rollback_test() {
     postgleam.simple_query(conn, "CREATE TEMP TABLE _tx_rb_test (id int4)")
 
   // Transaction that fails
-  let assert Error(_) =
+  let assert Error(postgleam.RolledBack("deliberate rollback")) =
     postgleam.transaction(conn, fn(conn) {
       let assert Ok(_) =
         postgleam.query(conn, "INSERT INTO _tx_rb_test VALUES ($1::int4)", [
           Some(value.Integer(99)),
         ])
-      Error(postgleam.query_error("deliberate rollback"))
+      Error("deliberate rollback")
     })
 
   // Verify the insert was rolled back
@@ -491,17 +492,13 @@ pub fn uuid_string_param_roundtrip_test() {
   let assert Ok(conn) = postgleam.connect(cfg)
 
   let uuid_str = "550e8400-e29b-41d4-a716-446655440000"
+  let assert Ok(uuid_param) = postgleam.uuid_string(uuid_str)
 
   let assert Ok(response) =
-    postgleam.query_with(
-      conn,
-      "SELECT $1::uuid",
-      [postgleam.uuid_string(uuid_str)],
-      {
-        use id <- decode.element(0, decode.uuid_string)
-        decode.success(id)
-      },
-    )
+    postgleam.query_with(conn, "SELECT $1::uuid", [uuid_param], {
+      use id <- decode.element(0, decode.uuid_string)
+      decode.success(id)
+    })
 
   should.equal(response.rows, [uuid_str])
   postgleam.disconnect(conn)
@@ -518,10 +515,11 @@ pub fn uuid_string_param_in_table_test() {
     )
 
   let uuid_str = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
+  let assert Ok(uuid_param) = postgleam.uuid_string(uuid_str)
 
   let assert Ok(_) =
     postgleam.query(conn, "INSERT INTO _uuid_test (id, name) VALUES ($1, $2)", [
-      postgleam.uuid_string(uuid_str),
+      uuid_param,
       postgleam.text("alice"),
     ])
 
@@ -535,7 +533,7 @@ pub fn uuid_string_param_in_table_test() {
     postgleam.query_one(
       conn,
       "SELECT id, name FROM _uuid_test WHERE id = $1",
-      [postgleam.uuid_string(uuid_str)],
+      [uuid_param],
       decoder,
     )
 
@@ -671,6 +669,7 @@ pub fn float_special_values_test() {
 
 fn pgbouncer_config() {
   config.default()
+  |> config.password("postgres")
   |> config.database("postgleam_test")
   |> config.pgbouncer(True)
 }
@@ -795,22 +794,20 @@ pub fn pool_health_check_test() {
     test_config()
     |> config.idle_interval(500)
 
-  let assert Ok(started) = postgleam_pool.start(cfg, 2)
-  let pool = started.data
+  let assert Ok(pool) = postgleam_pool.start(cfg, 2)
 
   // Query should work
-  let assert Ok(result) = postgleam_pool.query(pool, "SELECT 1::int4", [], 5000)
+  let assert Ok(result) = postgleam_pool.query(pool, "SELECT 1::int4", [])
   should.equal(result.rows, [[Some(value.Integer(1))]])
 
   // Wait for health check to run
   process.sleep(700)
 
   // Query should still work after health check
-  let assert Ok(result2) =
-    postgleam_pool.query(pool, "SELECT 2::int4", [], 5000)
+  let assert Ok(result2) = postgleam_pool.query(pool, "SELECT 2::int4", [])
   should.equal(result2.rows, [[Some(value.Integer(2))]])
 
-  postgleam_pool.shutdown(pool, 5000)
+  postgleam_pool.shutdown(pool)
 }
 
 pub fn pool_pgbouncer_mode_test() {
@@ -818,17 +815,11 @@ pub fn pool_pgbouncer_mode_test() {
     pgbouncer_config()
     |> config.idle_interval(5000)
 
-  let assert Ok(started) = postgleam_pool.start(cfg, 2)
-  let pool = started.data
+  let assert Ok(pool) = postgleam_pool.start(cfg, 2)
 
   let assert Ok(result) =
-    postgleam_pool.query(
-      pool,
-      "SELECT $1::int4",
-      [Some(value.Integer(42))],
-      5000,
-    )
+    postgleam_pool.query(pool, "SELECT $1::int4", [Some(value.Integer(42))])
   should.equal(result.rows, [[Some(value.Integer(42))]])
 
-  postgleam_pool.shutdown(pool, 5000)
+  postgleam_pool.shutdown(pool)
 }

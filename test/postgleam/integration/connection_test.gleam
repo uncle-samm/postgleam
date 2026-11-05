@@ -7,6 +7,7 @@ import postgleam/connection
 pub fn connect_default_user_test() {
   let cfg =
     config.default()
+    |> config.password("postgres")
     |> config.database("postgleam_test")
   let assert Ok(state) = connection.connect(cfg)
   // Should have a connection_id (backend PID)
@@ -21,6 +22,7 @@ pub fn connect_default_user_test() {
 pub fn connect_and_simple_query_test() {
   let cfg =
     config.default()
+    |> config.password("postgres")
     |> config.database("postgleam_test")
   let assert Ok(state) = connection.connect(cfg)
   let assert Ok(#(results, state)) =
@@ -35,6 +37,7 @@ pub fn connect_and_simple_query_test() {
 pub fn connect_and_simple_query_null_test() {
   let cfg =
     config.default()
+    |> config.password("postgres")
     |> config.database("postgleam_test")
   let assert Ok(state) = connection.connect(cfg)
   let assert Ok(#(results, state)) =
@@ -47,6 +50,7 @@ pub fn connect_and_simple_query_null_test() {
 pub fn connect_and_simple_query_multiple_columns_test() {
   let cfg =
     config.default()
+    |> config.password("postgres")
     |> config.database("postgleam_test")
   let assert Ok(state) = connection.connect(cfg)
   let assert Ok(#(results, state)) =
@@ -64,6 +68,7 @@ pub fn connect_and_simple_query_multiple_columns_test() {
 pub fn connect_and_simple_query_multiple_rows_test() {
   let cfg =
     config.default()
+    |> config.password("postgres")
     |> config.database("postgleam_test")
   let assert Ok(state) = connection.connect(cfg)
   let assert Ok(#(results, state)) =
@@ -80,6 +85,7 @@ pub fn connect_and_simple_query_multiple_rows_test() {
 pub fn connect_and_simple_query_error_test() {
   let cfg =
     config.default()
+    |> config.password("postgres")
     |> config.database("postgleam_test")
   let assert Ok(state) = connection.connect(cfg)
   let assert Error(_) =
@@ -101,20 +107,11 @@ pub fn connect_wrong_password_test() {
 
 pub fn connect_scram_auth_test() {
   let cfg =
-    config.Config(
-      host: "localhost",
-      port: 5432,
-      database: "postgleam_test",
-      username: "postgleam_scram_pw",
-      password: "postgleam_scram_pw",
-      timeout: 15_000,
-      connect_timeout: 5000,
-      extra_parameters: [],
-      ssl: config.SslDisabled,
-      pgbouncer: False,
-      idle_interval: 1000,
-      queue_timeout: 5000,
-    )
+    config.default()
+    |> config.database("postgleam_test")
+    |> config.username("postgleam_scram_pw")
+    |> config.password("postgleam_scram_pw")
+    |> config.allowed_auth([config.AuthScram])
   let assert Ok(state) = connection.connect(cfg)
   should.be_true(is_some(state.connection_id))
   connection.disconnect(state)
@@ -123,6 +120,7 @@ pub fn connect_scram_auth_test() {
 pub fn connect_multiple_queries_sequential_test() {
   let cfg =
     config.default()
+    |> config.password("postgres")
     |> config.database("postgleam_test")
   let assert Ok(state) = connection.connect(cfg)
 
@@ -138,14 +136,26 @@ pub fn connect_multiple_queries_sequential_test() {
   connection.disconnect(state)
 }
 
-/// When server doesn't support SSL, requesting it should give a clear error
+/// Requesting TLS from a server without it is an error, never a silent
+/// fallback to plain text. (When the TLS test certificates are set up the
+/// server has TLS; tls_test covers that case.)
 pub fn connect_ssl_not_available_test() {
-  let cfg =
-    config.default()
-    |> config.database("postgleam_test")
-    |> config.ssl(config.SslUnverified)
-  let assert Error(_) = connection.connect(cfg)
+  case is_file("build/tls/ca.pem") {
+    True -> Nil
+    False -> {
+      let cfg =
+        config.default()
+        |> config.password("postgres")
+        |> config.database("postgleam_test")
+        |> config.ssl(config.SslUnverified)
+      let assert Error(_) = connection.connect(cfg)
+      Nil
+    }
+  }
 }
+
+@external(erlang, "filelib", "is_file")
+fn is_file(path: String) -> Bool
 
 fn is_some(opt: option.Option(a)) -> Bool {
   case opt {

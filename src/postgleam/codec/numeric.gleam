@@ -1,16 +1,25 @@
-/// PostgreSQL numeric codec - binary format
-/// Wire: variable length - ndigits(int16) + weight(int16) + sign(uint16) + scale(int16) + digits(uint16[])
-/// Special: NaN = sign 0xC000, +Inf = sign 0xD000, -Inf = sign 0xF000
-///
-/// We represent numeric as a string to preserve arbitrary precision.
-import gleam/bit_array
+//// PostgreSQL numeric codec (binary format).
+////
+//// Wire: ndigits(int16) weight(int16) sign(uint16) dscale(int16)
+//// digits(uint16[ndigits]), base-10000 digits. Special signs: NaN 0xC000,
+//// +Infinity 0xD000, -Infinity 0xF000.
+////
+//// Values are represented as decimal strings to keep arbitrary precision.
+
+import gleam/int
+import gleam/list
 import gleam/option
+import gleam/string
 import postgleam/codec.{
   type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
 }
 import postgleam/value.{type Value, NaN, NegInfinity, Numeric, PosInfinity}
 
 pub const oid = 1700
+
+const sign_pos = 0x0000
+
+const sign_neg = 0x4000
 
 pub fn matcher() -> CodecMatcher {
   CodecMatcher(
@@ -37,7 +46,7 @@ pub fn encode(val: Value) -> Result(BitArray, String) {
     NaN -> Ok(<<0:16, 0:16, 0xC000:16, 0:16>>)
     PosInfinity -> Ok(<<0:16, 0:16, 0xD000:16, 0:16>>)
     NegInfinity -> Ok(<<0:16, 0:16, 0xF000:16, 0:16>>)
-    Numeric(s) -> encode_numeric_string(s)
+    Numeric(s) -> encode_string(s)
     _ ->
       Error("numeric codec: expected Numeric, NaN, PosInfinity, or NegInfinity")
   }
@@ -45,188 +54,191 @@ pub fn encode(val: Value) -> Result(BitArray, String) {
 
 pub fn decode(data: BitArray) -> Result(Value, String) {
   case data {
-    <<_ndigits:16, _weight:16-signed, 0xC000:16, _scale:16>> -> Ok(NaN)
-    <<_ndigits:16, _weight:16-signed, 0xD000:16, _scale:16>> -> Ok(PosInfinity)
-    <<_ndigits:16, _weight:16-signed, 0xF000:16, _scale:16>> -> Ok(NegInfinity)
-    <<ndigits:16, weight:16-signed, sign:16, scale:16, rest:bits>> ->
-      decode_numeric(ndigits, weight, sign, scale, rest)
+    <<_:16, _:16-signed, 0xC000:16, _:16>> -> Ok(NaN)
+    <<_:16, _:16-signed, 0xD000:16, _:16>> -> Ok(PosInfinity)
+    <<_:16, _:16-signed, 0xF000:16, _:16>> -> Ok(NegInfinity)
+    <<ndigits:16, weight:16-signed, sign:16, dscale:16, rest:bits>> ->
+      case read_digits(rest, ndigits, []) {
+        Ok(digits) ->
+          Ok(Numeric(digits_to_string(digits, weight, sign, dscale)))
+        Error(e) -> Error(e)
+      }
     _ -> Error("numeric codec: invalid data")
   }
 }
 
-fn decode_numeric(
-  ndigits: Int,
-  weight: Int,
-  sign: Int,
-  scale: Int,
-  data: BitArray,
-) -> Result(Value, String) {
-  let digits = read_digits(data, ndigits, [])
-  let str = digits_to_string(digits, weight, scale, sign)
-  Ok(Numeric(str))
+// --- Encoding ---
+
+/// Parse a decimal string such as `-12.345`, `1e5` or `.5E-3` and encode it.
+/// Anything else is an error rather than a silently wrong number.
+fn encode_string(input: String) -> Result(BitArray, String) {
+  let invalid =
+    Error("numeric codec: invalid numeric string " <> string.inspect(input))
+  let s = string.trim(input)
+  case string.lowercase(s) {
+    "nan" -> encode(NaN)
+    "infinity" | "+infinity" | "inf" | "+inf" -> encode(PosInfinity)
+    "-infinity" | "-inf" -> encode(NegInfinity)
+    _ -> {
+      let #(sign, unsigned) = case s {
+        "-" <> rest -> #(sign_neg, rest)
+        "+" <> rest -> #(sign_pos, rest)
+        _ -> #(sign_pos, s)
+      }
+      let #(mantissa, exponent) = case
+        string.split_once(string.lowercase(unsigned), "e")
+      {
+        Ok(#(m, e)) -> #(m, parse_exponent(e))
+        Error(_) -> #(unsigned, Ok(0))
+      }
+      let #(int_part, frac_part) = case string.split_once(mantissa, ".") {
+        Ok(#(i, f)) -> #(i, f)
+        Error(_) -> #(mantissa, "")
+      }
+      case exponent, all_digits(int_part), all_digits(frac_part) {
+        Ok(exp), True, True if int_part != "" || frac_part != "" ->
+          Ok(encode_parts(
+            sign,
+            int_part <> frac_part,
+            string.length(frac_part) - exp,
+          ))
+        _, _, _ -> invalid
+      }
+    }
+  }
 }
 
-fn read_digits(data: BitArray, count: Int, acc: List(Int)) -> List(Int) {
-  case count {
-    0 -> list_reverse(acc)
-    _ ->
-      case data {
-        <<d:16, rest:bits>> -> read_digits(rest, count - 1, [d, ..acc])
-        _ -> list_reverse(acc)
-      }
+fn parse_exponent(e: String) -> Result(Int, Nil) {
+  let digits = case e {
+    "+" <> rest -> rest
+    "-" <> rest -> rest
+    _ -> e
+  }
+  case all_digits(digits) && digits != "" {
+    True -> int.parse(e)
+    False -> Error(Nil)
+  }
+}
+
+fn all_digits(s: String) -> Bool {
+  string.to_utf_codepoints(s)
+  |> list.all(fn(c) {
+    let n = string.utf_codepoint_to_int(c)
+    n >= 48 && n <= 57
+  })
+}
+
+/// Encode value = digits × 10^(-scale).
+fn encode_parts(sign: Int, digits: String, scale: Int) -> BitArray {
+  // A negative scale means trailing zeros: 1e5 = "1" with scale -5.
+  let #(digits, scale) = case scale < 0 {
+    True -> #(digits <> string.repeat("0", -scale), 0)
+    False -> #(digits, scale)
+  }
+  // Pad so there is at least one integer digit.
+  let digits = case string.length(digits) <= scale {
+    True -> string.repeat("0", scale - string.length(digits) + 1) <> digits
+    False -> digits
+  }
+  let int_len = string.length(digits) - scale
+  let int_str = string.slice(digits, 0, int_len)
+  let frac_str = string.slice(digits, int_len, scale)
+  // Group into base-10000 digits aligned on the decimal point.
+  let int_pad = { 4 - int_len % 4 } % 4
+  let frac_pad = { 4 - scale % 4 } % 4
+  let int_groups = groups(string.repeat("0", int_pad) <> int_str)
+  let frac_groups = groups(frac_str <> string.repeat("0", frac_pad))
+  // Strip leading zero groups (adjusting weight) and trailing zero groups.
+  let weight = list.length(int_groups) - 1
+  let #(all, weight) =
+    strip_leading(list.append(int_groups, frac_groups), weight)
+  let all =
+    list.reverse(all) |> list.drop_while(fn(d) { d == 0 }) |> list.reverse
+  let #(sign, weight) = case all {
+    // Zero: no digits, weight 0, never negative.
+    [] -> #(sign_pos, 0)
+    _ -> #(sign, weight)
+  }
+  let body = list.fold(all, <<>>, fn(acc, d) { <<acc:bits, d:16>> })
+  <<list.length(all):16, weight:16, sign:16, scale:16, body:bits>>
+}
+
+fn strip_leading(digits: List(Int), weight: Int) -> #(List(Int), Int) {
+  case digits {
+    [0, ..rest] -> strip_leading(rest, weight - 1)
+    _ -> #(digits, weight)
+  }
+}
+
+fn groups(s: String) -> List(Int) {
+  case string.length(s) {
+    0 -> []
+    _ -> {
+      let assert Ok(n) = int.parse(string.slice(s, 0, 4))
+      [n, ..groups(string.drop_start(s, 4))]
+    }
+  }
+}
+
+// --- Decoding ---
+
+fn read_digits(
+  data: BitArray,
+  count: Int,
+  acc: List(Int),
+) -> Result(List(Int), String) {
+  case count, data {
+    0, _ -> Ok(list.reverse(acc))
+    _, <<d:16, rest:bits>> if d < 10_000 ->
+      read_digits(rest, count - 1, [d, ..acc])
+    _, _ -> Error("numeric codec: truncated or invalid digits")
   }
 }
 
 fn digits_to_string(
   digits: List(Int),
   weight: Int,
-  scale: Int,
   sign: Int,
+  dscale: Int,
 ) -> String {
-  let prefix = case sign {
-    0x4000 -> "-"
-    _ -> ""
+  let prefix = case sign == sign_neg {
+    True -> "-"
+    False -> ""
   }
-  case digits {
-    [] ->
-      case scale > 0 {
-        True -> prefix <> "0." <> repeat_char("0", scale)
-        False -> prefix <> "0"
-      }
-    _ -> {
-      // Build integer and fractional parts
-      let int_groups = weight + 1
-      let #(int_digits, frac_digits) = split_at(digits, int_groups)
-      let int_str = int_digits_to_string(int_digits, True)
-      let int_str = case int_str {
-        "" -> "0"
-        s -> s
-      }
-      case scale > 0 {
-        True -> {
-          let frac_str = frac_digits_to_string(frac_digits, scale)
-          prefix <> int_str <> "." <> frac_str
-        }
-        False -> prefix <> int_str
-      }
+  // Digit i (0-based) has value d × 10000^(weight - i).
+  let int_count = weight + 1
+  let int_digits = case int_count > 0 {
+    True -> {
+      let taken = list.take(digits, int_count)
+      list.append(taken, list.repeat(0, int_count - list.length(taken)))
     }
+    False -> []
+  }
+  let frac_digits = case int_count >= 0 {
+    True -> list.drop(digits, int_count)
+    False -> list.append(list.repeat(0, -int_count), digits)
+  }
+  let int_str = case int_digits {
+    [] -> "0"
+    [first, ..rest] ->
+      int.to_string(first) <> string.concat(list.map(rest, pad4))
+  }
+  let frac_str =
+    string.concat(list.map(frac_digits, pad4))
+    |> fit(dscale)
+  case dscale > 0 {
+    True -> prefix <> int_str <> "." <> frac_str
+    False -> prefix <> int_str
   }
 }
 
-fn int_digits_to_string(digits: List(Int), is_first: Bool) -> String {
-  int_digits_to_bytes(digits, is_first, <<>>)
+fn pad4(d: Int) -> String {
+  string.pad_start(int.to_string(d), 4, "0")
 }
 
-fn int_digits_to_bytes(
-  digits: List(Int),
-  is_first: Bool,
-  acc: BitArray,
-) -> String {
-  case digits {
-    [] ->
-      case bit_array.to_string(acc) {
-        Ok(s) -> s
-        Error(_) -> ""
-      }
-    [d, ..rest] -> {
-      let s = case is_first {
-        True -> int_to_string(d)
-        False -> pad_digit(d)
-      }
-      int_digits_to_bytes(rest, False, <<acc:bits, s:utf8>>)
-    }
+fn fit(s: String, len: Int) -> String {
+  case string.length(s) >= len {
+    True -> string.slice(s, 0, len)
+    False -> s <> string.repeat("0", len - string.length(s))
   }
 }
-
-fn frac_digits_to_string(digits: List(Int), scale: Int) -> String {
-  let raw = frac_raw(digits)
-  // Pad or truncate to exact scale
-  let len = string_length(raw)
-  case len >= scale {
-    True -> string_slice(raw, 0, scale)
-    False -> raw <> repeat_char("0", scale - len)
-  }
-}
-
-fn frac_raw(digits: List(Int)) -> String {
-  frac_raw_bytes(digits, <<>>)
-}
-
-fn frac_raw_bytes(digits: List(Int), acc: BitArray) -> String {
-  case digits {
-    [] ->
-      case bit_array.to_string(acc) {
-        Ok(s) -> s
-        Error(_) -> ""
-      }
-    [d, ..rest] -> {
-      let s = pad_digit(d)
-      frac_raw_bytes(rest, <<acc:bits, s:utf8>>)
-    }
-  }
-}
-
-fn pad_digit(d: Int) -> String {
-  let s = int_to_string(d)
-  let len = string_length(s)
-  case len {
-    1 -> "000" <> s
-    2 -> "00" <> s
-    3 -> "0" <> s
-    _ -> s
-  }
-}
-
-fn split_at(l: List(a), n: Int) -> #(List(a), List(a)) {
-  split_at_loop(l, n, [])
-}
-
-fn split_at_loop(l: List(a), n: Int, acc: List(a)) -> #(List(a), List(a)) {
-  case n <= 0 {
-    True -> #(list_reverse(acc), l)
-    False ->
-      case l {
-        [] -> #(list_reverse(acc), [])
-        [x, ..rest] -> split_at_loop(rest, n - 1, [x, ..acc])
-      }
-  }
-}
-
-fn list_reverse(l: List(a)) -> List(a) {
-  list_reverse_loop(l, [])
-}
-
-fn list_reverse_loop(l: List(a), acc: List(a)) -> List(a) {
-  case l {
-    [] -> acc
-    [x, ..rest] -> list_reverse_loop(rest, [x, ..acc])
-  }
-}
-
-/// Encode a numeric string to PostgreSQL binary format
-fn encode_numeric_string(s: String) -> Result(BitArray, String) {
-  // Use the Erlang FFI to encode - this is complex enough to warrant it
-  Ok(encode_numeric_ffi(s))
-}
-
-@external(erlang, "postgleam_ffi", "encode_numeric")
-fn encode_numeric_ffi(s: String) -> BitArray
-
-fn repeat_char(c: String, n: Int) -> String {
-  case n <= 0 {
-    True -> ""
-    False -> string_repeat(c, n)
-  }
-}
-
-@external(erlang, "erlang", "integer_to_binary")
-fn int_to_string(n: Int) -> String
-
-@external(erlang, "string", "length")
-fn string_length(s: String) -> Int
-
-@external(erlang, "binary", "part")
-fn string_slice(s: String, start: Int, len: Int) -> String
-
-@external(erlang, "string", "copies")
-fn string_repeat(s: String, n: Int) -> String

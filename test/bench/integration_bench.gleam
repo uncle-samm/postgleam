@@ -16,7 +16,10 @@ const duration = 5000
 const warmup = 50
 
 pub fn run() -> List(BenchmarkResult) {
-  let cfg = config.default() |> config.database("postgleam_test")
+  let cfg =
+    config.default()
+    |> config.password("postgres")
+    |> config.database("postgleam_test")
 
   // Connect for the main benchmarks
   let assert Ok(conn) = postgleam.connect(cfg)
@@ -61,7 +64,9 @@ fn bench_connect_disconnect(cfg: config.Config) -> bench.BenchResults {
   )
 }
 
-fn bench_simple_query_select_1(conn: postgleam.Connection) -> bench.BenchResults {
+fn bench_simple_query_select_1(
+  conn: postgleam.Connection,
+) -> bench.BenchResults {
   bench.run(
     [bench.Input("select_1", conn)],
     [
@@ -143,7 +148,9 @@ fn bench_query_with_decoder(conn: postgleam.Connection) -> bench.BenchResults {
   )
 }
 
-fn bench_prepare_execute_close(conn: postgleam.Connection) -> bench.BenchResults {
+fn bench_prepare_execute_close(
+  conn: postgleam.Connection,
+) -> bench.BenchResults {
   bench.run(
     [bench.Input("lifecycle", conn)],
     [
@@ -203,8 +210,7 @@ fn bench_batch_insert_100(conn: postgleam.Connection) -> bench.BenchResults {
 }
 
 fn bench_pool_throughput(cfg: config.Config) -> bench.BenchResults {
-  let assert Ok(started) = pool.start(cfg, 5)
-  let pool_subject = started.data
+  let assert Ok(pool_subject) = pool.start(cfg, 5)
 
   let results =
     bench.run(
@@ -213,7 +219,7 @@ fn bench_pool_throughput(cfg: config.Config) -> bench.BenchResults {
         bench.Function("pool.query", fn(p) {
           int.range(1, 10, Nil, fn(_, _) {
             let assert Ok(_) =
-              pool.query(p, "SELECT $1::int4", [Some(value.Integer(1))], 5000)
+              pool.query(p, "SELECT $1::int4", [Some(value.Integer(1))])
             Nil
           })
         }),
@@ -221,6 +227,6 @@ fn bench_pool_throughput(cfg: config.Config) -> bench.BenchResults {
       [bench.Duration(duration), bench.Warmup(warmup)],
     )
 
-  pool.shutdown(pool_subject, 5000)
+  pool.shutdown(pool_subject)
   results
 }

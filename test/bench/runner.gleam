@@ -100,15 +100,9 @@ pub fn report_to_json(report: BenchReport) -> String {
   |> json.to_string
 }
 
-/// Write a report to a JSON file, both as latest and per-commit snapshot
+/// Write a report to a JSON file (the baseline the next run compares with).
 pub fn write_report(report: BenchReport, path: String) -> Result(Nil, String) {
-  let content = report_to_json(report)
-  // Write the latest results
-  let _ = write_file(path, content)
-  // Also save a per-commit snapshot (e.g., bench/results/pure-abc123.json)
-  let commit_path =
-    string.replace(path, ".json", "-" <> report.commit <> ".json")
-  write_file(commit_path, content)
+  write_file(path, report_to_json(report))
 }
 
 /// Print a formatted results table to stdout

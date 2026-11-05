@@ -1,4 +1,5 @@
 import gleam/bit_array
+import gleam/string
 import gleeunit/should
 import postgleam/auth/scram
 
@@ -83,8 +84,65 @@ pub fn scram_invalid_server_salt_test() {
   should.be_error(result)
 }
 
-@external(erlang, "postgleam_test_ffi", "string_starts_with")
-fn string_starts_with(s: String, prefix: String) -> Bool
+/// RFC 7677 section 3 test vector (user "user", password "pencil").
+pub fn scram_rfc7677_vector_test() {
+  let client_first_bare = "n=user,r=rOprNGfwEbeRWgbNEkqO"
+  let server_first =
+    "r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,s=W22ZaJ0SNY7soEsUEjb6gQ==,i=4096"
+  let assert Ok(#(client_final, state)) =
+    scram.client_final(
+      bit_array.from_string(server_first),
+      client_first_bare,
+      "pencil",
+    )
+  should.equal(
+    bit_array.to_string(client_final),
+    Ok(
+      "c=biws,r=rOprNGfwEbeRWgbNEkqO%hvYDpWUa2RaTCAfuxFIlj)hNlF$k0,p=dHzbZapWIk4jUhN+Ute9ytag9zjfMHgsqmmiz7AndVQ=",
+    ),
+  )
+  let assert Ok(Nil) =
+    scram.verify_server(
+      <<"v=6rriTRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=":utf8>>,
+      state,
+    )
+  // A forged server signature is rejected.
+  let assert Error(_) =
+    scram.verify_server(
+      <<"v=AAAATRBi23WpRR/wtup+mMhUZUn/dB5nLTJRsjl95G4=":utf8>>,
+      state,
+    )
+}
 
-@external(erlang, "postgleam_test_ffi", "string_contains")
-fn string_contains(s: String, substr: String) -> Bool
+/// The server nonce must start with the client nonce and add to it.
+pub fn scram_rejects_foreign_nonce_test() {
+  let bare = "n=,r=clientnonce"
+  let assert Error(_) =
+    scram.client_final(<<"r=othernonce123,s=QUJD,i=4096":utf8>>, bare, "pw")
+  // Equal to the client nonce adds no server randomness.
+  let assert Error(_) =
+    scram.client_final(<<"r=clientnonce,s=QUJD,i=4096":utf8>>, bare, "pw")
+}
+
+/// A malicious server must not be able to make the client hash forever.
+pub fn scram_rejects_bad_iteration_counts_test() {
+  let bare = "n=,r=clientnonce"
+  let assert Error(_) =
+    scram.client_final(
+      <<"r=clientnonceXYZ,s=QUJD,i=1000000000":utf8>>,
+      bare,
+      "pw",
+    )
+  let assert Error(_) =
+    scram.client_final(<<"r=clientnonceXYZ,s=QUJD,i=0":utf8>>, bare, "pw")
+  let assert Error(_) =
+    scram.client_final(<<"r=clientnonceXYZ,s=QUJD,i=-5":utf8>>, bare, "pw")
+}
+
+fn string_starts_with(s: String, prefix: String) -> Bool {
+  string.starts_with(s, prefix)
+}
+
+fn string_contains(s: String, substr: String) -> Bool {
+  string.contains(s, substr)
+}

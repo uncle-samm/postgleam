@@ -13,22 +13,37 @@
 /// }
 /// ```
 import gleam/int
+import gleam/list
 import gleam/option.{type Option, None, Some}
+import gleam/string
 import postgleam/error.{type Error}
 import postgleam/value.{type Value}
 
 /// A decoder that extracts a typed value from a row (list of columns).
 pub opaque type RowDecoder(a) {
-  RowDecoder(run: fn(List(Option(Value))) -> Result(a, Error))
+  RowDecoder(run: fn(List(String), List(Option(Value))) -> Result(a, Error))
 }
 
 /// A decoder that extracts a typed value from a single cell.
 pub type ValueDecoder(a) =
   fn(Option(Value)) -> Result(a, Error)
 
-/// Run a decoder on a row.
-pub fn run(decoder: RowDecoder(a), row: List(Option(Value))) -> Result(a, Error) {
-  decoder.run(row)
+/// Run a decoder on a row. Column names are unknown here, so `field`
+/// decoders fail; use `run_with_columns` for those.
+pub fn run(
+  decoder: RowDecoder(a),
+  row: List(Option(Value)),
+) -> Result(a, Error) {
+  decoder.run([], row)
+}
+
+/// Run a decoder on a row whose column names are `columns` (in order).
+pub fn run_with_columns(
+  decoder: RowDecoder(a),
+  columns: List(String),
+  row: List(Option(Value)),
+) -> Result(a, Error) {
+  decoder.run(columns, row)
 }
 
 /// Decode the element at a given column index using a value decoder.
@@ -46,24 +61,126 @@ pub fn element(
   decoder: ValueDecoder(a),
   next: fn(a) -> RowDecoder(b),
 ) -> RowDecoder(b) {
-  RowDecoder(fn(row) {
+  RowDecoder(fn(columns, row) {
     case list_at(row, index) {
       Ok(cell) ->
         case decoder(cell) {
-          Ok(val) -> run(next(val), row)
-          Error(e) -> Error(e)
+          Ok(val) -> next(val).run(columns, row)
+          Error(e) -> Error(in_column(e, column_label(columns, index)))
         }
       Error(_) ->
         Error(error.DecodeError(
-          "Column index " <> int.to_string(index) <> " out of bounds",
+          "Column index "
+          <> int.to_string(index)
+          <> " out of bounds (the row has "
+          <> int.to_string(list.length(row))
+          <> " columns)",
         ))
+    }
+  })
+}
+
+/// Decode the column called `name`. Needs column names, which `query_with`,
+/// `query_one` and `pool.query_with` provide. If several columns share the
+/// name, the first is used.
+///
+/// ```gleam
+/// let decoder = {
+///   use id <- decode.field("id", decode.int)
+///   use name <- decode.field("name", decode.text)
+///   decode.success(#(id, name))
+/// }
+/// ```
+pub fn field(
+  name: String,
+  decoder: ValueDecoder(a),
+  next: fn(a) -> RowDecoder(b),
+) -> RowDecoder(b) {
+  RowDecoder(fn(columns, row) {
+    case index_of(columns, name, 0) {
+      Ok(index) -> element(index, decoder, next).run(columns, row)
+      Error(_) ->
+        Error(
+          error.DecodeError(case columns {
+            [] -> "Column \"" <> name <> "\": column names are not available"
+            _ ->
+              "No column named \""
+              <> name
+              <> "\" (columns: "
+              <> string.join(columns, ", ")
+              <> ")"
+          }),
+        )
     }
   })
 }
 
 /// Finalize a decoder chain with a value.
 pub fn success(value: a) -> RowDecoder(a) {
-  RowDecoder(fn(_row) { Ok(value) })
+  RowDecoder(fn(_columns, _row) { Ok(value) })
+}
+
+/// Transform the result of a row decoder.
+pub fn map(decoder: RowDecoder(a), f: fn(a) -> b) -> RowDecoder(b) {
+  RowDecoder(fn(columns, row) {
+    case decoder.run(columns, row) {
+      Ok(a) -> Ok(f(a))
+      Error(e) -> Error(e)
+    }
+  })
+}
+
+/// Decode an array column, decoding each element with `inner`. Use
+/// `optional` for arrays that may contain NULLs, and nest `list` for
+/// multi-dimensional arrays.
+///
+/// ```gleam
+/// use tags <- decode.element(0, decode.list(decode.text))
+/// ```
+pub fn list(inner: ValueDecoder(a)) -> ValueDecoder(List(a)) {
+  fn(val) {
+    case val {
+      Some(value.Array(items)) ->
+        list.index_map(items, fn(item, i) { #(item, i) })
+        |> list.try_map(fn(pair) {
+          case inner(pair.0) {
+            Ok(v) -> Ok(v)
+            Error(error.DecodeError(message)) ->
+              Error(error.DecodeError(
+                "element " <> int.to_string(pair.1) <> ": " <> message,
+              ))
+            Error(e) -> Error(e)
+          }
+        })
+      Some(other) ->
+        Error(error.DecodeError(
+          "Expected Array, got " <> value_type_name(other),
+        ))
+      None -> Error(error.DecodeError("Expected Array, got NULL"))
+    }
+  }
+}
+
+fn column_label(columns: List(String), index: Int) -> String {
+  case list_at(columns, index) {
+    Ok(name) -> "column " <> int.to_string(index) <> " (" <> name <> ")"
+    Error(_) -> "column " <> int.to_string(index)
+  }
+}
+
+fn in_column(e: Error, label: String) -> Error {
+  case e {
+    error.DecodeError(message) -> error.DecodeError(label <> ": " <> message)
+    other -> other
+  }
+}
+
+fn index_of(items: List(String), name: String, i: Int) -> Result(Int, Nil) {
+  case items {
+    [] -> Error(Nil)
+    [x, ..] if x == name -> Ok(i)
+    [_, ..rest] -> index_of(rest, name, i + 1)
+  }
 }
 
 // =============================================================================
@@ -309,7 +426,9 @@ pub fn line(val: Option(Value)) -> Result(#(Float, Float, Float), Error) {
 }
 
 /// Decode a line segment as #(x1, y1, x2, y2).
-pub fn lseg(val: Option(Value)) -> Result(#(Float, Float, Float, Float), Error) {
+pub fn lseg(
+  val: Option(Value),
+) -> Result(#(Float, Float, Float, Float), Error) {
   case val {
     Some(value.Lseg(x1, y1, x2, y2)) -> Ok(#(x1, y1, x2, y2))
     Some(other) ->
@@ -339,7 +458,9 @@ pub fn circle(val: Option(Value)) -> Result(#(Float, Float, Float), Error) {
 }
 
 /// Decode a path as #(closed, points).
-pub fn path(val: Option(Value)) -> Result(#(Bool, List(#(Float, Float))), Error) {
+pub fn path(
+  val: Option(Value),
+) -> Result(#(Bool, List(#(Float, Float))), Error) {
   case val {
     Some(value.Path(closed, pts)) -> Ok(#(closed, pts))
     Some(other) ->
@@ -435,7 +556,6 @@ fn list_at(l: List(a), index: Int) -> Result(a, Nil) {
 
 fn value_type_name(val: Value) -> String {
   case val {
-    value.Null -> "Null"
     value.Boolean(_) -> "Boolean"
     value.Integer(_) -> "Integer"
     value.Float(_) -> "Float"

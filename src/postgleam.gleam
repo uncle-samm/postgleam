@@ -1,35 +1,46 @@
-/// Postgleam - A native Gleam PostgreSQL driver implementing the wire protocol.
-///
-/// ## Quick Start
-///
-/// ```gleam
-/// let assert Ok(conn) = postgleam.connect(config.default() |> config.database("mydb"))
-/// let assert Ok(response) = postgleam.query_with(
-///   conn,
-///   "SELECT $1::int4, $2::text",
-///   [postgleam.int(42), postgleam.text("hello")],
-///   {
-///     use id <- decode.element(0, decode.int)
-///     use name <- decode.element(1, decode.text)
-///     decode.success(#(id, name))
-///   },
-/// )
-/// postgleam.disconnect(conn)
-/// ```
-import gleam/erlang/process.{type Subject}
+//// A PostgreSQL driver for Gleam, implementing the wire protocol in Gleam.
+////
+//// ```gleam
+//// import postgleam
+//// import postgleam/config
+//// import postgleam/decode
+////
+//// pub fn main() {
+////   let assert Ok(cfg) = config.from_url("postgres://app:secret@localhost/app")
+////   let assert Ok(conn) = postgleam.connect(cfg)
+////   let assert Ok(response) =
+////     postgleam.query_with(
+////       conn,
+////       "SELECT id, name FROM users WHERE active = $1",
+////       [postgleam.bool(True)],
+////       {
+////         use id <- decode.element(0, decode.int)
+////         use name <- decode.element(1, decode.text)
+////         decode.success(#(id, name))
+////       },
+////     )
+////   postgleam.disconnect(conn)
+//// }
+//// ```
+////
+//// A `Connection` is one PostgreSQL session owned by an actor. It runs one
+//// request at a time; use `postgleam/pool` to run queries concurrently.
+
+import gleam/erlang/process.{type Pid, type Subject}
 import gleam/list
 import gleam/option.{type Option, None, Some}
-import gleam/otp/actor
+import gleam/result
 import postgleam/config.{type Config}
 import postgleam/connection.{
   type ExtendedQueryResult, type PreparedStatement, type SimpleQueryResult,
 }
 import postgleam/decode.{type RowDecoder}
 import postgleam/error.{type Error}
+import postgleam/internal/call
 import postgleam/internal/connection_actor.{type Message}
 import postgleam/value.{type Value}
 
-/// A query parameter value (nullable).
+/// A query parameter value. `None` is SQL NULL.
 pub type Param =
   Option(Value)
 
@@ -38,111 +49,173 @@ pub type Response(a) {
   Response(rows: List(a), count: Int, tag: String)
 }
 
-/// An opaque connection handle backed by an OTP actor.
+/// A connection handle backed by an OTP actor.
 pub opaque type Connection {
-  Connection(subject: Subject(Message), config: Config)
+  Connection(subject: Subject(Message), pid: Pid, config: Config)
 }
 
-/// Connect to PostgreSQL and return a connection handle.
-/// The connection is managed by an OTP actor process.
+/// Connect to PostgreSQL. The connection is owned by a new actor process
+/// linked to the caller.
 pub fn connect(config: Config) -> Result(Connection, Error) {
-  case connection_actor.start(config) {
-    Ok(started) -> Ok(Connection(subject: started.data, config: config))
-    Error(actor.InitTimeout) ->
-      Error(error.ConnectionError("Connection initialization timed out"))
-    Error(actor.InitFailed(reason)) -> Error(error.ConnectionError(reason))
-    Error(actor.InitExited(_)) ->
-      Error(error.ConnectionError("Connection process exited during init"))
-  }
+  use started <- result.try(connection_actor.start(config))
+  Ok(Connection(subject: started.data, pid: started.pid, config: config))
 }
 
-/// Execute a parameterized query using the extended protocol (binary format).
-/// Returns typed values decoded through the codec registry.
+@internal
+pub fn from_actor(
+  subject: Subject(Message),
+  pid: Pid,
+  config: Config,
+) -> Connection {
+  Connection(subject:, pid:, config:)
+}
+
+@internal
+pub fn subject(conn: Connection) -> Subject(Message) {
+  conn.subject
+}
+
+/// Send a request to the connection actor and wait for the reply.
 ///
-/// Panics if the actor does not respond within the configured timeout.
+/// Never panics: if the actor dies the result is `ConnectionError`, and if no
+/// reply arrives in time it is `TimeoutError`. The actor bounds every
+/// network wait by `config.timeout` (cancelling the query on the server),
+/// so the caller allows for that plus a reconnect.
+fn call(
+  conn: Connection,
+  make: fn(Subject(Result(a, Error))) -> Message,
+) -> Result(a, Error) {
+  let wait = conn.config.timeout * 2 + conn.config.connect_timeout + 1000
+  call.call(
+    conn.subject,
+    make,
+    call.Within(wait),
+    Error(not_running()),
+    Error(error.TimeoutError),
+  )
+}
+
+fn not_running() -> Error {
+  error.ConnectionError("Connection process is not running")
+}
+
+/// Execute a parameterized query (extended protocol, binary format). The
+/// statement is prepared once per connection and cached.
 pub fn query(
   conn: Connection,
   sql: String,
   params: List(Param),
 ) -> Result(ExtendedQueryResult, Error) {
-  process.call(conn.subject, conn.config.timeout, fn(reply) {
-    connection_actor.Query(sql, params, reply)
-  })
+  call(conn, connection_actor.Query(sql, params, _))
 }
 
-/// Execute a parameterized query and decode each row using the provided decoder.
+/// Execute a parameterized query and decode each row with `decoder`.
 pub fn query_with(
   conn: Connection,
   sql: String,
   params: List(Param),
   decoder: RowDecoder(a),
 ) -> Result(Response(a), Error) {
-  case query(conn, sql, params) {
-    Ok(result) ->
-      case decode_rows(result.rows, decoder, []) {
-        Ok(decoded) ->
-          Ok(Response(
-            rows: decoded,
-            count: list.length(decoded),
-            tag: result.tag,
-          ))
-        Error(e) -> Error(e)
-      }
-    Error(e) -> Error(e)
-  }
+  use result <- result.try(query(conn, sql, params))
+  decode_result(result, decoder)
 }
 
-/// Execute the same query with multiple param sets in a single pipeline.
-/// All Bind+Execute messages are sent together with a single Sync,
-/// eliminating N-1 round-trips compared to calling query() N times.
-/// Returns one result per param set.
+@internal
+pub fn decode_result(
+  result: ExtendedQueryResult,
+  decoder: RowDecoder(a),
+) -> Result(Response(a), Error) {
+  let columns = list.map(result.columns, fn(c) { c.name })
+  use rows <- result.try(
+    list.try_map(result.rows, decode.run_with_columns(decoder, columns, _)),
+  )
+  Ok(Response(rows: rows, count: list.length(rows), tag: result.tag))
+}
+
+/// Execute the same statement with several parameter sets in one pipeline
+/// (one network round trip). Returns one result per parameter set.
 pub fn query_batch(
   conn: Connection,
   sql: String,
   param_sets: List(List(Param)),
 ) -> Result(List(ExtendedQueryResult), Error) {
-  process.call(conn.subject, conn.config.timeout, fn(reply) {
-    connection_actor.BatchQuery(sql, param_sets, reply)
-  })
+  call(conn, connection_actor.BatchQuery(sql, param_sets, _))
 }
 
-/// Execute a query and return the first decoded row, or error if no rows.
+/// Execute a query and decode the first row. Errors if there are no rows.
 pub fn query_one(
   conn: Connection,
   sql: String,
   params: List(Param),
   decoder: RowDecoder(a),
 ) -> Result(a, Error) {
-  case query_with(conn, sql, params, decoder) {
-    Ok(response) ->
-      case response.rows {
-        [first, ..] -> Ok(first)
-        [] -> Error(error.DecodeError("Expected at least one row, got none"))
-      }
-    Error(e) -> Error(e)
+  use response <- result.try(query_with(conn, sql, params, decoder))
+  case response.rows {
+    [first, ..] -> Ok(first)
+    [] -> Error(error.DecodeError("Expected at least one row, got none"))
   }
 }
 
-/// Execute a simple text query (no parameters).
-/// Returns text-formatted results.
+/// Fold over a query's rows without loading them all into memory. Rows are
+/// fetched `chunk_size` at a time; `f` runs inside the connection's actor,
+/// so it should be quick and must not use this connection.
+pub fn query_fold(
+  conn: Connection,
+  sql: String,
+  params: List(Param),
+  chunk_size: Int,
+  decoder: RowDecoder(a),
+  initial: acc,
+  f: fn(acc, a) -> acc,
+) -> Result(acc, Error) {
+  let out = process.new_subject()
+  let step = fn(acc: Result(acc, Error), columns, row) {
+    use acc <- result.try(acc)
+    use decoded <- result.try(decode.run_with_columns(decoder, columns, row))
+    Ok(f(acc, decoded))
+  }
+  let runner =
+    connection_actor.fold_runner(
+      params,
+      chunk_size,
+      conn.config.timeout,
+      Ok(initial),
+      step,
+      out,
+    )
+  // A fold can take many round trips, so wait for the actor without a
+  // deadline: it bounds each network wait itself, and the monitor catches
+  // a crash.
+  use _ <- result.try(call.call(
+    conn.subject,
+    connection_actor.Fold(sql, runner, _),
+    call.UntilReplyOrExit,
+    Error(not_running()),
+    Error(error.TimeoutError),
+  ))
+  case process.receive(out, 0) {
+    Ok(acc) -> acc
+    Error(Nil) ->
+      Error(error.ProtocolError("query_fold finished without a result"))
+  }
+}
+
+/// Execute a simple (text protocol) query. Use for DDL and multi-statement
+/// scripts; values come back as text.
 pub fn simple_query(
   conn: Connection,
   sql: String,
 ) -> Result(List(SimpleQueryResult), Error) {
-  process.call(conn.subject, conn.config.timeout, fn(reply) {
-    connection_actor.SimpleQuery(sql, reply)
-  })
+  call(conn, connection_actor.SimpleQuery(sql, _))
 }
 
-/// Prepare a named statement for later execution.
+/// Prepare a named statement for later `execute`.
 pub fn prepare(
   conn: Connection,
   name: String,
   sql: String,
 ) -> Result(PreparedStatement, Error) {
-  process.call(conn.subject, conn.config.timeout, fn(reply) {
-    connection_actor.Prepare(name, sql, reply)
-  })
+  call(conn, connection_actor.Prepare(name, sql, _))
 }
 
 /// Execute a previously prepared statement.
@@ -151,76 +224,91 @@ pub fn execute(
   prepared: PreparedStatement,
   params: List(Param),
 ) -> Result(ExtendedQueryResult, Error) {
-  process.call(conn.subject, conn.config.timeout, fn(reply) {
-    connection_actor.ExecutePrepared(prepared, params, reply)
-  })
+  call(conn, connection_actor.ExecutePrepared(prepared, params, _))
 }
 
 /// Close a prepared statement.
 pub fn close(conn: Connection, name: String) -> Result(Nil, Error) {
-  process.call(conn.subject, conn.config.timeout, fn(reply) {
-    connection_actor.CloseStatement(name, reply)
-  })
+  call(conn, connection_actor.CloseStatement(name, _))
 }
 
-/// Bulk insert data using the COPY protocol.
-/// `sql` should be a COPY ... FROM STDIN statement.
-/// `data` is a list of text-format row chunks (each ending with \n).
-/// Returns the command tag (e.g., "COPY 1000").
+/// Bulk insert with COPY. `sql` is a `COPY ... FROM STDIN` statement and
+/// `data` the rows in COPY text format (each ending with `\n`).
+/// Returns the command tag (e.g. `"COPY 1000"`).
 pub fn copy_in(
   conn: Connection,
   sql: String,
   data: List(BitArray),
 ) -> Result(String, Error) {
-  process.call(conn.subject, conn.config.timeout, fn(reply) {
-    connection_actor.CopyIn(sql, data, reply)
-  })
+  call(conn, connection_actor.CopyIn(sql, data, _))
 }
 
-/// Export data using the COPY protocol.
-/// `sql` should be a COPY ... TO STDOUT statement.
-/// Returns the raw data chunks from PostgreSQL.
-pub fn copy_out(conn: Connection, sql: String) -> Result(List(BitArray), Error) {
-  process.call(conn.subject, conn.config.timeout, fn(reply) {
-    connection_actor.CopyOut(sql, reply)
-  })
+/// Bulk export with COPY. `sql` is a `COPY ... TO STDOUT` statement.
+pub fn copy_out(
+  conn: Connection,
+  sql: String,
+) -> Result(List(BitArray), Error) {
+  call(conn, connection_actor.CopyOut(sql, _))
 }
 
-/// Disconnect from PostgreSQL and stop the actor.
+/// Send a LISTEN/NOTIFY notification. Receive them with `postgleam/listener`.
+pub fn notify(
+  conn: Connection,
+  channel: String,
+  payload: String,
+) -> Result(Nil, Error) {
+  query(conn, "SELECT pg_notify($1, $2)", [text(channel), text(payload)])
+  |> result.replace(Nil)
+}
+
+/// Disconnect and stop the actor.
 pub fn disconnect(conn: Connection) -> Nil {
-  process.call(conn.subject, conn.config.timeout, fn(reply) {
-    connection_actor.Disconnect(reply)
-  })
+  call.call(
+    conn.subject,
+    connection_actor.Disconnect,
+    call.Within(conn.config.timeout + 1000),
+    Nil,
+    Nil,
+  )
 }
 
-/// Execute a function within a transaction.
-/// Automatically BEGINs, and COMMITs on Ok or ROLLBACKs on Error.
+/// Why a transaction did not commit.
+pub type TransactionError(e) {
+  /// The function returned `Error(e)`; the transaction was rolled back.
+  RolledBack(e)
+  /// BEGIN, COMMIT or ROLLBACK itself failed.
+  TransactionFailed(Error)
+}
+
+/// Run `f` in a transaction: BEGIN, then COMMIT if `f` returns `Ok` or
+/// ROLLBACK if it returns `Error`. Nested calls are not supported (use
+/// SAVEPOINT yourself); with a pool, use `pool.transaction`.
 pub fn transaction(
   conn: Connection,
-  f: fn(Connection) -> Result(a, Error),
-) -> Result(a, Error) {
-  case simple_query(conn, "BEGIN") {
-    Error(e) -> Error(e)
-    Ok(_) -> {
-      case f(conn) {
-        Ok(val) -> {
-          case simple_query(conn, "COMMIT") {
-            Ok(_) -> Ok(val)
-            Error(e) -> Error(e)
-          }
-        }
-        Error(e) -> {
-          let _ = simple_query(conn, "ROLLBACK")
-          Error(e)
-        }
+  f: fn(Connection) -> Result(a, e),
+) -> Result(a, TransactionError(e)) {
+  use _ <- result.try(
+    simple_query(conn, "BEGIN") |> result.map_error(TransactionFailed),
+  )
+  case f(conn) {
+    Ok(value) ->
+      case simple_query(conn, "COMMIT") {
+        Ok([connection.SimpleQueryResult(tag: "ROLLBACK", ..)]) ->
+          // COMMIT of a failed transaction reports ROLLBACK.
+          Error(
+            TransactionFailed(error.ConnectionError(
+              "Transaction was aborted by an earlier error and rolled back",
+            )),
+          )
+        Ok(_) -> Ok(value)
+        Error(e) -> Error(TransactionFailed(e))
       }
-    }
+    Error(e) ->
+      case simple_query(conn, "ROLLBACK") {
+        Ok(_) -> Error(RolledBack(e))
+        Error(rollback_error) -> Error(TransactionFailed(rollback_error))
+      }
   }
-}
-
-/// Create an error value for use in transactions or other contexts.
-pub fn query_error(message: String) -> Error {
-  error.ConnectionError(message)
 }
 
 // =============================================================================
@@ -262,13 +350,11 @@ pub fn uuid(val: BitArray) -> Param {
   Some(value.Uuid(val))
 }
 
-/// Create a UUID parameter from a string like "550e8400-e29b-41d4-a716-446655440000".
-/// Returns None (NULL) if the string is not a valid UUID.
-pub fn uuid_string(val: String) -> Param {
-  case value.uuid_from_string(val) {
-    Ok(v) -> Some(v)
-    Error(_) -> None
-  }
+/// Create a UUID parameter from a string like
+/// "550e8400-e29b-41d4-a716-446655440000". Errors if the string is not a
+/// valid UUID (it never silently becomes NULL).
+pub fn uuid_string(val: String) -> Result(Param, Nil) {
+  value.uuid_from_string(val) |> result.map(Some)
 }
 
 /// Create a JSON parameter.
@@ -409,24 +495,5 @@ pub fn nullable(val: Option(a), to_param: fn(a) -> Param) -> Param {
   case val {
     Some(v) -> to_param(v)
     None -> None
-  }
-}
-
-// =============================================================================
-// Helpers
-// =============================================================================
-
-fn decode_rows(
-  rows: List(List(Option(Value))),
-  decoder: RowDecoder(a),
-  acc: List(a),
-) -> Result(List(a), Error) {
-  case rows {
-    [] -> Ok(list.reverse(acc))
-    [row, ..rest] ->
-      case decode.run(decoder, row) {
-        Ok(val) -> decode_rows(rest, decoder, [val, ..acc])
-        Error(e) -> Error(e)
-      }
   }
 }

@@ -8,6 +8,7 @@ import postgleam/value
 
 fn test_config() {
   config.default()
+  |> config.password("postgres")
   |> config.database("postgleam_test")
 }
 

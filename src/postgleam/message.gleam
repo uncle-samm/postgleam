@@ -1,5 +1,6 @@
 import gleam/bit_array
 import gleam/dict.{type Dict}
+import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 
@@ -300,26 +301,30 @@ fn string_bytes(s: String) -> BitArray {
 /// Try to decode one backend message from a byte buffer.
 /// Returns Decoded(msg, remaining_bytes), Incomplete, or DecodeFailed.
 pub fn decode_backend(buffer: BitArray) -> DecodeResult {
-  let buf_size = bit_array.byte_size(buffer)
-  // Need at least 5 bytes: 1 type + 4 length
-  case buf_size < 5 {
-    True -> Incomplete
-    False -> {
-      let assert Ok(<<type_byte:8-unsigned, length:32-big-signed, _rest:bits>>) =
-        Ok(buffer)
-      // length includes the 4-byte length field itself
-      let payload_size = length - 4
-      let total_size = 1 + length
-      case buf_size < total_size {
-        True -> Incomplete
+  case buffer {
+    <<type_byte:8-unsigned, length:32-big-signed, body:bits>> ->
+      case length < 4 {
+        // The length counts itself, so anything under 4 is corrupt.
+        True -> DecodeFailed("Invalid message length " <> int.to_string(length))
         False -> {
-          let assert Ok(payload) = bit_array.slice(buffer, 5, payload_size)
-          let assert Ok(rest) =
-            bit_array.slice(buffer, total_size, buf_size - total_size)
-          decode_message(type_byte, payload, payload_size, rest)
+          let payload_size = length - 4
+          case body {
+            <<payload:bytes-size(payload_size), rest:bits>> ->
+              decode_message(type_byte, payload, payload_size, rest)
+            _ -> Incomplete
+          }
         }
       }
-    }
+    _ -> Incomplete
+  }
+}
+
+/// The total size (type byte + length) of the next message in the buffer,
+/// if its header has arrived. Used to reject oversized messages early.
+pub fn peek_message_size(buffer: BitArray) -> Result(Int, Nil) {
+  case buffer {
+    <<_type:8, length:32-big-signed, _:bits>> -> Ok(1 + length)
+    _ -> Error(Nil)
   }
 }
 
@@ -387,10 +392,12 @@ fn decode_auth(payload: BitArray, _size: Int, rest: BitArray) -> DecodeResult {
     <<3:32-big-signed>> -> Decoded(AuthenticationMsg(AuthCleartext), rest)
     <<5:32-big-signed, salt:bits>> -> {
       case bit_array.byte_size(salt) >= 4 {
-        True -> {
-          let assert Ok(salt4) = bit_array.slice(salt, 0, 4)
-          Decoded(AuthenticationMsg(AuthMd5(salt: salt4)), rest)
-        }
+        True ->
+          case salt {
+            <<salt4:bytes-size(4), _:bits>> ->
+              Decoded(AuthenticationMsg(AuthMd5(salt: salt4)), rest)
+            _ -> DecodeFailed("MD5 auth missing salt")
+          }
         False -> DecodeFailed("MD5 auth missing salt")
       }
     }
@@ -724,23 +731,25 @@ fn decode_cstring_loop(
 // =============================================================================
 
 /// Extract column values from a DataRow's raw value bytes.
-/// Returns a list of Option(BitArray) — None for NULL columns.
-pub fn extract_row_values(values: BitArray) -> List(Option(BitArray)) {
+/// Returns a list of Option(BitArray) — None for NULL columns — or an error
+/// if the bytes are not a well-formed sequence of length-prefixed values.
+pub fn extract_row_values(
+  values: BitArray,
+) -> Result(List(Option(BitArray)), Nil) {
   extract_row_values_loop(values, [])
-  |> list.reverse
 }
 
 fn extract_row_values_loop(
   data: BitArray,
   acc: List(Option(BitArray)),
-) -> List(Option(BitArray)) {
+) -> Result(List(Option(BitArray)), Nil) {
   case data {
-    <<>> -> acc
+    <<>> -> Ok(list.reverse(acc))
     <<-1:32-big-signed, remaining:bits>> ->
       extract_row_values_loop(remaining, [None, ..acc])
-    <<len:32-big-signed, value:bytes-size(len), remaining:bits>> ->
+    <<len:32-big-signed, value:bytes-size(len), remaining:bits>> if len >= 0 ->
       extract_row_values_loop(remaining, [Some(value), ..acc])
-    _ -> acc
+    _ -> Error(Nil)
   }
 }
 

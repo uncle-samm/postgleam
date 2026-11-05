@@ -8,6 +8,7 @@ import bench/message_bench
 import bench/realworld_bench
 import bench/registry_bench
 import bench/runner
+import bench/throughput_bench
 import bench/uuid_bench
 import gleam/io
 import gleam/list
@@ -21,17 +22,20 @@ pub fn main() {
     ["pure"] -> run_pure()
     ["integration"] -> run_integration()
     ["realworld"] -> run_realworld()
+    ["throughput"] -> throughput_bench.run(bench_config())
     ["compare", baseline, current] -> compare.run(baseline, current)
     ["all"] -> {
       run_pure()
       run_integration()
       run_realworld()
+      throughput_bench.run(bench_config())
     }
     _ -> {
       io.println("Usage:")
       io.println("  make bench-pure          Run pure Gleam benchmarks")
       io.println("  make bench-integration   Run database benchmarks")
       io.println("  make bench-realworld     Run real-world benchmarks")
+      io.println("  make bench-throughput    Run queries/second benchmarks")
       io.println("  make bench               Run all benchmarks")
       io.println(
         "  make bench-compare BASELINE=... CURRENT=...  Compare results",
@@ -87,9 +91,14 @@ fn run_integration() -> Nil {
 }
 
 fn run_realworld() -> Nil {
-  let cfg = config.default() |> config.database("postgleam_test")
-  let _ = realworld_bench.run(cfg)
+  let _ = realworld_bench.run(bench_config())
   Nil
+}
+
+fn bench_config() -> config.Config {
+  config.default()
+  |> config.password("postgres")
+  |> config.database("postgleam_test")
 }
 
 /// Auto-compare current results with previous saved results

@@ -1,6 +1,8 @@
 import gleam/option.{None, Some}
+import gleam/string
 import gleeunit/should
 import postgleam/decode
+import postgleam/error
 import postgleam/value
 
 // =============================================================================
@@ -334,4 +336,72 @@ pub fn decode_empty_row_test() {
 
   decode.run(decoder, [])
   |> should.be_error()
+}
+
+// =============================================================================
+// Column names, arrays, map
+// =============================================================================
+
+pub fn decode_field_by_name_test() {
+  let decoder = {
+    use name <- decode.field("name", decode.text)
+    use id <- decode.field("id", decode.int)
+    decode.success(#(id, name))
+  }
+  let row = [Some(value.Integer(1)), Some(value.Text("ada"))]
+  should.equal(
+    decode.run_with_columns(decoder, ["id", "name"], row),
+    Ok(#(1, "ada")),
+  )
+}
+
+pub fn decode_field_missing_column_test() {
+  let decoder = {
+    use x <- decode.field("missing", decode.int)
+    decode.success(x)
+  }
+  let assert Error(error.DecodeError(message)) =
+    decode.run_with_columns(decoder, ["id"], [Some(value.Integer(1))])
+  should.be_true(string.contains(message, "missing"))
+  // Without column names a field decoder says so instead of guessing.
+  let assert Error(error.DecodeError(_)) =
+    decode.run(decoder, [Some(value.Integer(1))])
+}
+
+pub fn decode_error_names_the_column_test() {
+  let decoder = {
+    use _ <- decode.element(0, decode.int)
+    use n <- decode.element(1, decode.int)
+    decode.success(n)
+  }
+  let assert Error(error.DecodeError(message)) =
+    decode.run_with_columns(decoder, ["a", "b"], [
+      Some(value.Integer(1)),
+      Some(value.Text("x")),
+    ])
+  should.be_true(string.contains(message, "column 1 (b)"))
+}
+
+pub fn decode_list_test() {
+  let cell = Some(value.Array([Some(value.Integer(1)), Some(value.Integer(2))]))
+  should.equal(decode.list(decode.int)(cell), Ok([1, 2]))
+  let with_null = Some(value.Array([Some(value.Integer(1)), None]))
+  should.equal(
+    decode.list(decode.optional(decode.int))(with_null),
+    Ok([Some(1), None]),
+  )
+  let assert Error(error.DecodeError(message)) =
+    decode.list(decode.int)(with_null)
+  should.be_true(string.contains(message, "element 1"))
+  let assert Error(_) = decode.list(decode.int)(None)
+}
+
+pub fn decode_map_test() {
+  let decoder =
+    {
+      use n <- decode.element(0, decode.int)
+      decode.success(n)
+    }
+    |> decode.map(fn(n) { n * 2 })
+  should.equal(decode.run(decoder, [Some(value.Integer(21))]), Ok(42))
 }

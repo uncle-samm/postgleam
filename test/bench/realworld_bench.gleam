@@ -671,14 +671,6 @@ fn save_results(results: List(RealworldResult)) -> Nil {
     Ok(_) -> io.println("Results written to " <> results_path)
     Error(e) -> io.println("Failed to write results: " <> e)
   }
-
-  // Also save per-commit snapshot
-  let commit_path =
-    string.replace(results_path, ".json", "-" <> commit <> ".json")
-  case write_file(commit_path, content) {
-    Ok(_) -> io.println("Snapshot written to " <> commit_path)
-    Error(_) -> Nil
-  }
 }
 
 fn load_previous_results() -> Result(List(RealworldResult), Nil) {

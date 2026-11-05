@@ -1,4 +1,4 @@
-.PHONY: build test test-setup smoke format format-check docs check push tag publish release bench bench-pure bench-integration bench-realworld bench-compare
+.PHONY: build test test-setup smoke format format-check docs check push tag publish release bench bench-pure bench-integration bench-realworld bench-throughput bench-compare
 
 build:
 	gleam build
@@ -32,7 +32,7 @@ tag:
 publish:
 	/usr/bin/expect scripts/publish.sh
 
-release: push tag publish
+release: check push tag publish
 
 bench: bench-pure bench-integration
 
@@ -44,6 +44,9 @@ bench-integration:
 
 bench-realworld:
 	gleam build && erl -pa build/dev/erlang/*/ebin -noshell -run bench_runner main -- realworld
+
+bench-throughput:
+	gleam build && erl -pa build/dev/erlang/*/ebin -noshell -run bench_runner main -- throughput
 
 bench-compare:
 	@if [ -z "$(BASELINE)" ] || [ -z "$(CURRENT)" ]; then \

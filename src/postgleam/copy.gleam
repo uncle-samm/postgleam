@@ -1,187 +1,123 @@
-/// COPY protocol support for bulk data transfer.
-import gleam/option.{None}
+//// COPY protocol support for bulk data transfer.
+
+import gleam/list
+import gleam/option
 import gleam/result
-import postgleam/connection.{type ConnectionState}
+import postgleam/connection.{type ConnectionState, type Failure, Failure}
 import postgleam/error.{type Error}
 import postgleam/message
 
-/// COPY data to a table from text-format data rows
+/// COPY rows into a table. `sql` must be a `COPY ... FROM STDIN` statement and
+/// `data` the rows in the COPY format (text format: tab-separated, each row
+/// ending with `\n`). Returns the command tag, e.g. `"COPY 1000"`.
 pub fn copy_in(
   state: ConnectionState,
   sql: String,
   data: List(BitArray),
   timeout: Int,
 ) -> Result(#(String, ConnectionState), Error) {
-  // Send the COPY command via simple query
-  use state <- result.try(connection.send_message(
-    state,
-    message.SimpleQuery(sql),
-  ))
-  // Receive CopyInResponse
-  use state <- result.try(recv_copy_in_response(state, timeout))
-  // Send CopyData messages
-  use state <- result.try(send_copy_data(state, data))
-  // Send CopyDone
-  use state <- result.try(connection.send_message(state, message.CopyDoneMsg))
-  // Receive CommandComplete + ReadyForQuery
-  recv_copy_complete(state, timeout)
+  copy_in_f(state, sql, data, timeout) |> result.map_error(fn(f) { f.error })
 }
 
-/// COPY data from a table to the client
+@internal
+pub fn copy_in_f(
+  state: ConnectionState,
+  sql: String,
+  data: List(BitArray),
+  timeout: Int,
+) -> Result(#(String, ConnectionState), Failure) {
+  use state <- result.try(
+    connection.send_message(state, message.SimpleQuery(sql)) |> lift,
+  )
+  use #(msg, state) <- result.try(next(state, timeout))
+  case msg {
+    message.CopyInResponse(..) -> {
+      // All CopyData chunks and CopyDone go out in one write.
+      let msgs =
+        list.map(data, message.CopyDataMsg)
+        |> list.append([message.CopyDoneMsg])
+      use state <- result.try(connection.send_messages(state, msgs) |> lift)
+      recv_complete(state, sql, timeout, "")
+    }
+    message.ErrorResponse(fields) ->
+      Error(connection.fail_to_ready(state, fields, sql, timeout))
+    other -> Error(connection.protocol_failure("CopyInResponse", other))
+  }
+}
+
+/// COPY rows out of a table. `sql` must be a `COPY ... TO STDOUT` statement.
+/// Returns the raw data chunks (one per row in text format).
 pub fn copy_out(
   state: ConnectionState,
   sql: String,
   timeout: Int,
 ) -> Result(#(List(BitArray), ConnectionState), Error) {
-  use state <- result.try(connection.send_message(
-    state,
-    message.SimpleQuery(sql),
-  ))
-  use state <- result.try(recv_copy_out_response(state, timeout))
-  recv_copy_out_data(state, timeout, [])
+  copy_out_f(state, sql, timeout) |> result.map_error(fn(f) { f.error })
 }
 
-fn recv_copy_in_response(
+@internal
+pub fn copy_out_f(
   state: ConnectionState,
+  sql: String,
   timeout: Int,
-) -> Result(ConnectionState, Error) {
-  use #(msg, state) <- result.try(connection.receive_message(state, timeout))
+) -> Result(#(List(BitArray), ConnectionState), Failure) {
+  use state <- result.try(
+    connection.send_message(state, message.SimpleQuery(sql)) |> lift,
+  )
+  use #(msg, state) <- result.try(next(state, timeout))
   case msg {
-    message.CopyInResponse(_, _) -> Ok(state)
-    message.ErrorResponse(fields) -> {
-      let pg_fields = error.parse_error_fields(fields)
-      Error(error.PgError(
-        fields: pg_fields,
-        connection_id: state.connection_id,
-        query: None,
-      ))
-    }
-    message.NoticeResponse(_) -> recv_copy_in_response(state, timeout)
-    _ -> Error(error.ProtocolError("Expected CopyInResponse"))
+    message.CopyOutResponse(..) -> recv_copy_data(state, sql, timeout, [])
+    message.ErrorResponse(fields) ->
+      Error(connection.fail_to_ready(state, fields, sql, timeout))
+    other -> Error(connection.protocol_failure("CopyOutResponse", other))
   }
 }
 
-fn recv_copy_out_response(
+fn recv_copy_data(
   state: ConnectionState,
-  timeout: Int,
-) -> Result(ConnectionState, Error) {
-  use #(msg, state) <- result.try(connection.receive_message(state, timeout))
-  case msg {
-    message.CopyOutResponse(_, _) -> Ok(state)
-    message.ErrorResponse(fields) -> {
-      let pg_fields = error.parse_error_fields(fields)
-      Error(error.PgError(
-        fields: pg_fields,
-        connection_id: state.connection_id,
-        query: None,
-      ))
-    }
-    message.NoticeResponse(_) -> recv_copy_out_response(state, timeout)
-    _ -> Error(error.ProtocolError("Expected CopyOutResponse"))
-  }
-}
-
-fn send_copy_data(
-  state: ConnectionState,
-  data: List(BitArray),
-) -> Result(ConnectionState, Error) {
-  case data {
-    [] -> Ok(state)
-    [chunk, ..rest] -> {
-      use state <- result.try(connection.send_message(
-        state,
-        message.CopyDataMsg(chunk),
-      ))
-      send_copy_data(state, rest)
-    }
-  }
-}
-
-fn recv_copy_complete(
-  state: ConnectionState,
-  timeout: Int,
-) -> Result(#(String, ConnectionState), Error) {
-  use #(msg, state) <- result.try(connection.receive_message(state, timeout))
-  case msg {
-    message.CommandComplete(tag) -> {
-      // Receive ReadyForQuery
-      use #(msg2, state) <- result.try(connection.receive_message(
-        state,
-        timeout,
-      ))
-      case msg2 {
-        message.ReadyForQuery(status) ->
-          Ok(#(
-            tag,
-            connection.ConnectionState(..state, transaction_status: status),
-          ))
-        _ -> Ok(#(tag, state))
-      }
-    }
-    message.ErrorResponse(fields) -> {
-      let pg_fields = error.parse_error_fields(fields)
-      Error(error.PgError(
-        fields: pg_fields,
-        connection_id: state.connection_id,
-        query: None,
-      ))
-    }
-    message.NoticeResponse(_) -> recv_copy_complete(state, timeout)
-    _ -> Error(error.ProtocolError("Expected CommandComplete after COPY"))
-  }
-}
-
-fn recv_copy_out_data(
-  state: ConnectionState,
+  sql: String,
   timeout: Int,
   acc: List(BitArray),
-) -> Result(#(List(BitArray), ConnectionState), Error) {
-  use #(msg, state) <- result.try(connection.receive_message(state, timeout))
+) -> Result(#(List(BitArray), ConnectionState), Failure) {
+  use #(msg, state) <- result.try(next(state, timeout))
   case msg {
-    message.CopyData(data) -> recv_copy_out_data(state, timeout, [data, ..acc])
+    message.CopyData(data) -> recv_copy_data(state, sql, timeout, [data, ..acc])
     message.CopyDone -> {
-      // Receive CommandComplete + ReadyForQuery
-      use #(msg2, state) <- result.try(connection.receive_message(
-        state,
-        timeout,
-      ))
-      case msg2 {
-        message.CommandComplete(_) -> {
-          use #(msg3, state) <- result.try(connection.receive_message(
-            state,
-            timeout,
-          ))
-          case msg3 {
-            message.ReadyForQuery(status) ->
-              Ok(#(
-                list_reverse(acc),
-                connection.ConnectionState(..state, transaction_status: status),
-              ))
-            _ -> Ok(#(list_reverse(acc), state))
-          }
-        }
-        _ -> Ok(#(list_reverse(acc), state))
-      }
+      use #(_, state) <- result.try(recv_complete(state, sql, timeout, ""))
+      Ok(#(list.reverse(acc), state))
     }
-    message.ErrorResponse(fields) -> {
-      let pg_fields = error.parse_error_fields(fields)
-      Error(error.PgError(
-        fields: pg_fields,
-        connection_id: state.connection_id,
-        query: None,
-      ))
-    }
-    _ -> Error(error.ProtocolError("Expected CopyData or CopyDone"))
+    message.ErrorResponse(fields) ->
+      Error(connection.fail_to_ready(state, fields, sql, timeout))
+    other -> Error(connection.protocol_failure("CopyData or CopyDone", other))
   }
 }
 
-fn list_reverse(l: List(a)) -> List(a) {
-  list_reverse_loop(l, [])
+/// Read CommandComplete then ReadyForQuery.
+fn recv_complete(
+  state: ConnectionState,
+  sql: String,
+  timeout: Int,
+  tag: String,
+) -> Result(#(String, ConnectionState), Failure) {
+  use #(msg, state) <- result.try(next(state, timeout))
+  case msg {
+    message.CommandComplete(tag) -> recv_complete(state, sql, timeout, tag)
+    message.ReadyForQuery(status) ->
+      Ok(#(tag, connection.ConnectionState(..state, transaction_status: status)))
+    message.ErrorResponse(fields) ->
+      Error(connection.fail_to_ready(state, fields, sql, timeout))
+    other ->
+      Error(connection.protocol_failure(
+        "CommandComplete or ReadyForQuery",
+        other,
+      ))
+  }
 }
 
-fn list_reverse_loop(l: List(a), acc: List(a)) -> List(a) {
-  case l {
-    [] -> acc
-    [x, ..rest] -> list_reverse_loop(rest, [x, ..acc])
-  }
+fn next(state: ConnectionState, timeout: Int) {
+  connection.receive_message(state, timeout) |> lift
+}
+
+fn lift(r: Result(a, Error)) -> Result(a, Failure) {
+  result.map_error(r, fn(e) { Failure(error: e, state: option.None) })
 }

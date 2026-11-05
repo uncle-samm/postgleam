@@ -46,6 +46,24 @@ pub type Error {
   SocketError(message: String)
   /// Operation timed out
   TimeoutError
+  /// No pool connection became free within `queue_timeout`
+  PoolTimeout
+}
+
+/// A one-line human-readable description of an error.
+pub fn to_string(err: Error) -> String {
+  case err {
+    PgError(fields, _, _) ->
+      "PostgreSQL error " <> fields.code <> ": " <> fields.message
+    ConnectionError(msg) -> "Connection error: " <> msg
+    AuthenticationError(msg) -> "Authentication error: " <> msg
+    EncodeError(msg) -> "Encode error: " <> msg
+    DecodeError(msg) -> "Decode error: " <> msg
+    ProtocolError(msg) -> "Protocol error: " <> msg
+    SocketError(msg) -> "Socket error: " <> msg
+    TimeoutError -> "Timed out"
+    PoolTimeout -> "Timed out waiting for a pool connection"
+  }
 }
 
 /// Parse a raw error field dict (from wire protocol) into structured PgErrorFields

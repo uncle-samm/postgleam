@@ -3,41 +3,54 @@
 [![Package Version](https://img.shields.io/hexpm/v/postgleam)](https://hex.pm/packages/postgleam)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-ffaff3)](https://hexdocs.pm/postgleam/)
 
-A native Gleam PostgreSQL driver implementing the wire protocol from scratch. No NIFs, no C dependencies, no wrappers around existing Erlang/Elixir drivers — just Gleam + BitArrays + a small Erlang FFI for crypto and SSL.
+A PostgreSQL driver for Gleam on the BEAM. The wire protocol, type codecs,
+authentication and connection pool are written in Gleam. The only Erlang code
+is a small module that sets up TLS through OTP's `ssl` application (see
+[What is not Gleam](#what-is-not-gleam)). No NIFs, no C, and no wrapping of
+another driver.
 
 ```sh
 gleam add postgleam
 ```
 
+> **A personal project.** I built postgleam mainly for my own use. It's
+> tested and I use it, but there is no support or roadmap promise. Issues and
+> pull requests are welcome, and so are forks if you want to take it in your
+> own direction.
+
 ## Quick start
 
 ```gleam
+import gleam/option.{type Option}
 import postgleam
 import postgleam/config
 import postgleam/decode
 
-pub fn main() {
-  let assert Ok(conn) =
-    config.default()
-    |> config.database("mydb")
-    |> postgleam.connect()
+pub type User {
+  User(id: Int, name: String, email: Option(String))
+}
 
-  // Parameterized queries with typed params — SQL injection safe
+pub fn main() {
+  let assert Ok(cfg) =
+    config.from_url("postgres://app:secret@localhost:5432/app_db")
+  let assert Ok(conn) = postgleam.connect(cfg)
+
+  let user = {
+    use id <- decode.field("id", decode.int)
+    use name <- decode.field("name", decode.text)
+    use email <- decode.field("email", decode.optional(decode.text))
+    decode.success(User(id:, name:, email:))
+  }
+
+  // Parameters are sent separately from the SQL, so this is injection safe.
   let assert Ok(response) =
     postgleam.query_with(
       conn,
       "SELECT id, name, email FROM users WHERE active = $1",
       [postgleam.bool(True)],
-      {
-        use id <- decode.element(0, decode.int)
-        use name <- decode.element(1, decode.text)
-        use email <- decode.element(2, decode.optional(decode.text))
-        decode.success(#(id, name, email))
-      },
+      user,
     )
-
-  response.rows
-  // -> [#(1, "alice", Some("alice@example.com")), #(2, "bob", None)]
+  // response.rows: List(User)
 
   postgleam.disconnect(conn)
 }
@@ -45,221 +58,313 @@ pub fn main() {
 
 ## Features
 
-- **Full PostgreSQL wire protocol v3** — binary format for all queries
-- **25+ type codecs** — bool, int2/4/8, float4/8, text, bytea, uuid, date, time, timetz, timestamp, timestamptz, interval, json, jsonb, numeric, point, inet/cidr, macaddr, arrays, and more
-- **SSL/TLS** — verified (system CA + SNI + hostname check) and unverified modes, works with Neon and other cloud providers
-- **SCRAM-SHA-256, MD5, and cleartext authentication**
-- **Connection pooling** — supervised pool with round-robin checkout
-- **Transactions** — `postgleam.transaction(conn, fn(conn) { ... })` with auto-commit/rollback
-- **LISTEN/NOTIFY** — pub/sub notifications
-- **COPY IN/OUT** — bulk data transfer
-- **Portal streaming** — fetch large result sets in chunks
-- **WAL replication** — logical replication with LSN tracking
-- **Row decoders** — composable, type-safe result decoding via `use` syntax
-- **Parameter constructors** — `postgleam.int(42)`, `postgleam.text("hello")`, `postgleam.null()`
+- PostgreSQL wire protocol v3, binary format, with cached prepared statements.
+- 35+ type codecs, including arrays (multi-dimensional too), json/jsonb,
+  numeric, uuid, dates and times, intervals, geometric and network types.
+  Types without a codec (ranges, hstore, enums, ...) come back as text.
+- TLS with certificate and host name verification, a custom CA file, and
+  client certificates.
+- SCRAM-SHA-256, MD5 and cleartext authentication, with a policy for which
+  ones the client accepts.
+- A connection pool that runs queries concurrently, with queue timeouts,
+  health checks and supervision.
+- Transactions, LISTEN/NOTIFY, COPY in/out, streaming large results, and
+  logical replication.
+- Recovery that keeps a connection correct after timeouts and errors.
 
-## Usage
+## Connecting
 
-### Connection
+Use a URL or the builder functions.
 
 ```gleam
 import postgleam
 import postgleam/config
 
-// Builder pattern
-let assert Ok(conn) =
-  config.default()  // localhost:5432, postgres/postgres
-  |> config.host("db.example.com")
-  |> config.port(5432)
-  |> config.database("myapp")
-  |> config.username("myuser")
+// From a URL. Supported query parameters: sslmode (disable, require,
+// verify-ca, verify-full), sslrootcert, connect_timeout (seconds).
+// Anything else is sent to the server as a startup parameter.
+let assert Ok(cfg) =
+  config.from_url("postgres://app:secret@db.internal/app?sslmode=verify-full")
+
+// Or with builders. default() is postgres@localhost:5432/postgres, no TLS.
+let cfg =
+  config.default()
+  |> config.host("db.internal")
+  |> config.database("app")
+  |> config.username("app")
   |> config.password("secret")
   |> config.ssl(config.SslVerified)
-  |> postgleam.connect()
 
-// Don't forget to disconnect
+let assert Ok(conn) = postgleam.connect(cfg)
 postgleam.disconnect(conn)
 ```
 
-### Queries with decoders
+A `Connection` is one PostgreSQL session, owned by an actor process that runs
+one request at a time. To run queries concurrently, use a [pool](#pool).
+
+Every call waits at most about `config.timeout` (15 s by default) for each
+reply. A query that runs longer is cancelled on the server and returns
+`TimeoutError`, and the connection reconnects before the next request. Calls
+never panic: if the connection's process has died you get `ConnectionError`.
+
+## Queries
 
 ```gleam
-import postgleam
-import postgleam/decode
+// Raw rows: List(List(Option(Value)))
+let assert Ok(result) =
+  postgleam.query(conn, "SELECT $1::int4 + 1", [postgleam.int(41)])
 
-// Define a decoder for your row shape
-let user_decoder = {
-  use id <- decode.element(0, decode.int)
-  use name <- decode.element(1, decode.text)
-  use email <- decode.element(2, decode.optional(decode.text))
-  decode.success(User(id:, name:, email:))
-}
+// Decoded rows
+let assert Ok(response) = postgleam.query_with(conn, sql, params, decoder)
 
-// query_with returns decoded rows
-let assert Ok(response) =
-  postgleam.query_with(conn, "SELECT id, name, email FROM users", [], user_decoder)
-response.rows  // -> [User(1, "alice", Some("alice@example.com")), ...]
-
-// query_one returns a single decoded row (errors if no rows)
+// Exactly the first row (an error if there are none)
 let assert Ok(user) =
-  postgleam.query_one(
-    conn,
-    "SELECT id, name, email FROM users WHERE id = $1",
-    [postgleam.int(1)],
-    user_decoder,
-  )
+  postgleam.query_one(conn, "SELECT id, name, email FROM users WHERE id = $1",
+    [postgleam.int(1)], user_decoder)
+
+// One statement, many parameter sets, one round trip
+let assert Ok(results) =
+  postgleam.query_batch(conn, "INSERT INTO tags (name) VALUES ($1)", [
+    [postgleam.text("gleam")],
+    [postgleam.text("erlang")],
+  ])
+
+// Large results without loading them all: rows are fetched 500 at a time
+let amount = {
+  use n <- decode.element(0, decode.int)
+  decode.success(n)
+}
+let assert Ok(total) =
+  postgleam.query_fold(conn, "SELECT amount FROM payments", [], 500, amount,
+    0, fn(sum, n) { sum + n })
+
+// Text protocol: DDL, several statements at once, values come back as text
+let assert Ok(_) =
+  postgleam.simple_query(conn, "CREATE TABLE t (id serial); INSERT INTO t DEFAULT VALUES")
+```
+
+### Decoders
+
+Decode columns by name with `decode.field` or by position with
+`decode.element`. Errors name the column that failed.
+
+```gleam
+let decoder = {
+  use id <- decode.field("id", decode.int)
+  use tags <- decode.field("tags", decode.list(decode.text))
+  use deleted_at <- decode.field("deleted_at", decode.optional(decode.timestamp))
+  decode.success(#(id, tags, deleted_at))
+}
 ```
 
 ### Parameters
 
 ```gleam
-// Typed constructors — no wrapping needed
-// PostgreSQL infers types from table columns, so casts are rarely needed
-postgleam.query(conn, "INSERT INTO users (name, age, active) VALUES ($1, $2, $3)", [
+postgleam.query(conn, "INSERT INTO users (name, age, email) VALUES ($1, $2, $3)", [
   postgleam.text("alice"),
   postgleam.int(30),
-  postgleam.bool(True),
-])
-
-// NULL
-postgleam.query(conn, "UPDATE users SET email = $1 WHERE id = $2", [
-  postgleam.null(),
-  postgleam.int(1),
-])
-
-// Nullable from Option values
-let maybe_email: Option(String) = None
-postgleam.query(conn, "INSERT INTO users (email) VALUES ($1)", [
-  postgleam.nullable(maybe_email, postgleam.text),
+  postgleam.nullable(maybe_email, postgleam.text),  // None becomes NULL
 ])
 ```
 
-Available constructors: `int`, `float`, `text`, `bool`, `null`, `bytea`, `uuid`, `json`, `jsonb`, `numeric`, `date`, `timestamp`, `timestamptz`, `nullable`.
+Constructors include `int`, `float`, `text`, `bool`, `null`, `nullable`,
+`bytea`, `uuid`, `uuid_string`, `json`, `jsonb`, `numeric`, `date`,
+`timestamp`, `timestamptz`, `time`, `interval`, `array` and the geometric and
+network types. `text` works for any column type PostgreSQL can parse from
+text (enums, uuid, ranges, ...). `uuid_string` returns a `Result`, so an
+invalid UUID is an error rather than a NULL.
 
-### Transactions
+## Transactions
 
 ```gleam
-let assert Ok(user_id) =
+let result =
   postgleam.transaction(conn, fn(conn) {
-    let assert Ok(_) =
-      postgleam.query(conn, "INSERT INTO users (name) VALUES ($1::text)", [
-        postgleam.text("alice"),
-      ])
-    postgleam.query_one(
-      conn,
-      "SELECT currval('users_id_seq')::int4",
-      [],
-      { use id <- decode.element(0, decode.int); decode.success(id) },
+    use _ <- result.try(
+      postgleam.query(conn, "UPDATE accounts SET balance = balance - 10 WHERE id = 1", [])
+      |> result.map_error(DbError),
     )
+    use _ <- result.try(check_limits(conn))  // returns Result(_, MyError)
+    Ok(Nil)
   })
-// Commits on Ok, rolls back on Error
+
+case result {
+  Ok(Nil) -> // committed
+  Error(postgleam.RolledBack(my_error)) -> // your function returned Error; rolled back
+  Error(postgleam.TransactionFailed(db_error)) -> // BEGIN, COMMIT or ROLLBACK failed
+}
 ```
 
-### Connection pool
+If the connection is lost in the middle of a transaction, the rest of the
+transaction fails with `ConnectionError` instead of running outside it, and
+`transaction` returns `TransactionFailed`.
+
+## Pool
 
 ```gleam
 import postgleam/pool
 
-let assert Ok(started) = pool.start(cfg, pool_size: 5)
-let p = started.data
+let assert Ok(db) = pool.start(cfg, size: 10)
 
-let assert Ok(result) =
-  pool.query(p, "SELECT 1::int4", [], timeout: 5000)
+let assert Ok(response) = pool.query_with(db, sql, params, decoder)
 
-pool.shutdown(p, timeout: 5000)
+// Several statements on one connection
+let assert Ok(n) =
+  pool.with_connection(db, fn(conn) {
+    use _ <- result.try(postgleam.query(conn, "SET LOCAL work_mem = '64MB'", []))
+    postgleam.query_one(conn, report_sql, [], decoder)
+  })
+
+let assert Ok(_) = pool.transaction(db, fn(conn) { ... })
+
+pool.shutdown(db)
 ```
 
-### Simple queries (text protocol)
+Each pooled connection is its own actor, so queries from different processes
+run in parallel. When no connection is free a caller waits up to
+`config.queue_timeout` (5 s) and then gets `PoolTimeout`. When a connection
+comes back, anything left open (such as a transaction) is rolled back first;
+this also happens if the process holding it exits. Idle connections are
+pinged every `config.idle_interval`, and a crashed connection is replaced.
+
+Under a supervisor:
 
 ```gleam
-// For DDL, multi-statement queries, or when you don't need binary decoding
-let assert Ok(results) =
-  postgleam.simple_query(conn, "CREATE TABLE foo (id serial); INSERT INTO foo DEFAULT VALUES")
+let name = process.new_name("db")
+let assert Ok(_) =
+  static_supervisor.new(static_supervisor.OneForOne)
+  |> static_supervisor.add(pool.supervised(cfg, 10, name))
+  |> static_supervisor.start
+let db = pool.named(name)
 ```
 
-### SSL/TLS
+`pool.stats(db)` reports idle, busy and waiting counts.
+
+## TLS and authentication
 
 ```gleam
-// Verified — full certificate validation (recommended for production)
 config.default()
-|> config.ssl(config.SslVerified)
-
-// Unverified — skip certificate verification (compatibility mode only)
-config.default()
-|> config.ssl(config.SslUnverified)
-
-// Disabled — plain TCP (default, for local development)
-config.default()
-|> config.ssl(config.SslDisabled)
+|> config.ssl(config.SslVerified)          // verify certificate and host name
+|> config.ssl_ca_file("/etc/ssl/db-ca.pem") // default: the system trust store
+|> config.ssl_client_cert(certfile: "client.pem", keyfile: "client-key.pem")
+|> config.allowed_auth([config.AuthScram])  // refuse anything weaker
 ```
 
-### LISTEN/NOTIFY
+- `SslVerified` checks the certificate chain and the host name (or, for an IP
+  address, the certificate's IP entries). Use it for anything that crosses a
+  network.
+- `SslUnverified` encrypts but accepts any certificate, so it only protects
+  against passive eavesdropping.
+- `SslDisabled` (the default) is plain TCP, for local development.
+- Cleartext passwords are never sent over a connection without TLS, even if
+  `AuthCleartext` is allowed.
+- The password is stored as an opaque `Secret`, so it does not show up when a
+  config is printed or included in a crash report.
+
+## LISTEN/NOTIFY
+
+A listener owns a connection and sends every notification to a `Subject`.
+If its connection drops it reconnects and listens again (notifications sent
+while it was disconnected are lost, as PostgreSQL does not keep them).
 
 ```gleam
-import postgleam/notifications
+import postgleam/listener
 
-let assert Ok(state) = notifications.listen(state, "my_channel", timeout)
-// ... from another connection:
-let assert Ok(_) = notifications.notify(other, "my_channel", "payload", timeout)
-// Receive:
-let assert Ok(#(notifs, state)) = notifications.receive_notifications(state, timeout)
+let inbox = process.new_subject()
+let assert Ok(l) = listener.start(cfg, inbox)
+let assert Ok(Nil) = listener.listen(l, "jobs")
+
+let assert Ok(Nil) = postgleam.notify(conn, "jobs", "42")
+
+let assert Ok(notification) = process.receive(inbox, 1000)
+// notification.channel == "jobs", notification.payload == "42"
+listener.stop(l)
 ```
 
-### COPY
+## COPY
 
 ```gleam
-import postgleam/copy
+let assert Ok("COPY 2") =
+  postgleam.copy_in(conn, "COPY users (id, name) FROM STDIN", [
+    <<"1\tAlice\n":utf8>>,
+    <<"2\tBob\n":utf8>>,
+  ])
 
-// Bulk insert
-let data = [<<"1\tAlice\n":utf8>>, <<"2\tBob\n":utf8>>]
-let assert Ok(#("COPY 2", state)) =
-  copy.copy_in(state, "COPY users FROM STDIN", data, timeout)
-
-// Bulk export
-let assert Ok(#(rows, state)) =
-  copy.copy_out(state, "COPY users TO STDOUT", timeout)
+let assert Ok(rows) = postgleam.copy_out(conn, "COPY users TO STDOUT")
 ```
 
-## Architecture
+## PgBouncer
 
-Postgleam is a complete port of [Postgrex](https://github.com/elixir-ecto/postgrex) to native Gleam, adapted to Gleam's type system and conventions:
+With `config.pgbouncer(True)` the driver uses only unnamed statements, which
+work with PgBouncer in transaction pooling mode. It costs one extra round
+trip's worth of work per query (see the benchmarks).
 
-| Layer | Module | Description |
-|-------|--------|-------------|
-| **Public API** | `postgleam` | `connect`, `query`, `query_with`, `query_one`, `transaction`, etc. |
-| **Decoders** | `postgleam/decode` | Composable row decoders for type-safe result extraction |
-| **Config** | `postgleam/config` | Connection configuration with builder pattern |
-| **Pool** | `postgleam/pool` | Supervised connection pool |
-| **Actor** | `postgleam/internal/connection_actor` | OTP actor wrapping the connection |
-| **Protocol** | `postgleam/connection` | Wire protocol state machine (low-level) |
-| **Messages** | `postgleam/message` | Encode/decode all 33+ PostgreSQL message types |
-| **Codecs** | `postgleam/codec/*` | Binary encode/decode for each PostgreSQL type |
-| **Auth** | `postgleam/auth/*` | SCRAM-SHA-256, MD5, cleartext |
-| **Transport** | `postgleam/internal/transport` | TCP/SSL abstraction |
+## Low-level API
+
+`postgleam/connection` exposes the protocol directly on a `ConnectionState`
+value with no actor, for when you want full control. `postgleam/stream`,
+`postgleam/copy`, `postgleam/notifications` and `postgleam/replication`
+(logical replication) work on it too.
+
+## Benchmarks
+
+Numbers from `make bench-throughput` on a 4-core Linux machine with
+PostgreSQL 16 on localhost, OTP 27. Every query is `SELECT $1::int4`, so they
+measure the driver and the round trip, not PostgreSQL's work.
+
+| Scenario | Queries/s |
+|---|---:|
+| `postgleam.query`, one connection (cached statement) | 16,800 |
+| `postgleam.simple_query`, one connection | 13,600 |
+| `postgleam.query`, PgBouncer mode | 9,100 |
+| `pool.query`, 1 caller | 10,600 |
+| `pool.query`, 10 concurrent callers, pool of 10 | 42,300 |
+| 10 concurrent callers, one connection each | 65,300 |
+| For reference: `pgbench -M prepared`, 1 client | 20,100 |
+
+On one connection postgleam reaches about 85% of libpq's speed (pgbench).
+Through the pool, throughput grows with the number of callers until the pool
+size or the server's CPUs run out. On a real network the round trip
+dominates: expect each sequential query to take roughly one network round
+trip, and use the pool, `query_batch` or `copy_in` to do more per trip.
+
+Version 0.9 fixed two large slowdowns found in review. Without TCP_NODELAY,
+Linux delayed ACKs held every extended query for about 40 ms (22 queries/s),
+and the old pool ran every query inside the pool process, one at a time, so
+ten callers got no more throughput than one.
+
+The other benchmark suites:
+
+```sh
+make bench-pure          # codecs, message parsing, decoders (no database)
+make bench-integration   # common operations against a database
+make bench-realworld     # insert/query workloads modelled on go-sqlite-bench
+make bench-throughput    # the table above
+```
+
+## What is not Gleam
+
+`src/postgleam_ffi.erl` upgrades the socket to TLS with OTP's `ssl` module.
+Gleam has no TLS library for the BEAM, and building the `ssl` options
+(including the host name check for IP addresses) is clearer in Erlang. A few
+other calls go straight to the Erlang standard library with `@external`:
+`crypto:pbkdf2_hmac` and `unicode:characters_to_nfkc_binary` for SCRAM, and
+`inet:setopts` to turn on TCP_NODELAY.
 
 ## Development
 
 ```sh
-# Start PostgreSQL
-docker compose up -d
-
-# Setup test database
-./scripts/setup_test_db.sh
-
-# Run tests (508 tests)
-gleam test
-
-# Run the full local validation gate
-make check
-
-# Run end-to-end infrastructure smoke checks
-make smoke
+docker compose up -d            # PostgreSQL 16
+./scripts/setup_test_db.sh      # create the test databases and roles
+gleam test                      # 550+ tests (README examples are compiled too)
+make check                      # format check, build, tests, docs
 ```
 
-For production connections, prefer `config.SslVerified`. `SslUnverified`,
-MD5 authentication, and cleartext authentication are compatibility modes for
-legacy or local environments.
+The TLS tests run when `build/tls/ca.pem` exists and the server uses the
+matching certificate (`scripts/make_test_certs.sh` creates them). The
+PgBouncer tests run when PgBouncer in transaction mode answers on
+`localhost:6432`. CI runs both.
 
 ## Target
 
-Gleam on the BEAM (Erlang). JavaScript target is not supported — this library uses TCP sockets and OTP actors.
+Erlang only. The JavaScript target is not supported, since the driver uses
+TCP sockets and OTP processes.

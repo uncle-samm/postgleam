@@ -49,10 +49,44 @@ jobs:
           docker restart "${{ job.services.postgres.id }}"
           until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"; do sleep 1; done
 
+      - name: Enable TLS on PostgreSQL for the TLS tests
+        run: |
+          ./scripts/make_test_certs.sh build/tls
+          container="${{ job.services.postgres.id }}"
+          docker cp build/tls/server.crt "$container":/var/lib/postgresql/data/server.crt
+          docker cp build/tls/server.key "$container":/var/lib/postgresql/data/server.key
+          docker exec "$container" bash -lc "chown postgres:postgres /var/lib/postgresql/data/server.* && chmod 600 /var/lib/postgresql/data/server.key && printf \"ssl = on\nssl_cert_file = 'server.crt'\nssl_key_file = 'server.key'\n\" >> /var/lib/postgresql/data/postgresql.conf"
+          docker restart "$container"
+          until pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER"; do sleep 1; done
+          psql "host=$PGHOST port=$PGPORT user=$PGUSER sslmode=verify-full sslrootcert=build/tls/ca.pem" -tc "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()"
+
+      - name: Start PgBouncer (transaction pooling) for the PgBouncer tests
+        run: |
+          sudo apt-get install -y pgbouncer
+          # The package starts a system instance on 6432; use our own config.
+          sudo systemctl stop pgbouncer || true
+          mkdir -p /tmp/pgb
+          cat > /tmp/pgb/pgbouncer.ini <<'EOF'
+          [databases]
+          postgleam_test = host=127.0.0.1 port=5432 dbname=postgleam_test
+          [pgbouncer]
+          listen_addr = 127.0.0.1
+          listen_port = 6432
+          auth_type = scram-sha-256
+          auth_file = /tmp/pgb/userlist.txt
+          pool_mode = transaction
+          default_pool_size = 2
+          max_client_conn = 100
+          logfile = /tmp/pgb/pgbouncer.log
+          pidfile = /tmp/pgb/pgbouncer.pid
+          EOF
+          echo '"postgres" "postgres"' > /tmp/pgb/userlist.txt
+          /usr/sbin/pgbouncer -d /tmp/pgb/pgbouncer.ini
+
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "27"
-          gleam-version: "1.14.0"
+          gleam-version: "1.19.2"
 
       - name: Install dependencies
         run: gleam deps download
@@ -61,7 +95,9 @@ jobs:
         run: make format-check
 
       - name: Set up test database
-        run: psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -f test/setup.sql
+        run: |
+          psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -f test/setup.sql
+          psql -h 127.0.0.1 -p 6432 -U "$PGUSER" postgleam_test -tc "SELECT 'pgbouncer ok'"
 
       - name: Build
         run: make build
@@ -82,7 +118,7 @@ jobs:
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "27"
-          gleam-version: "1.14.0"
+          gleam-version: "1.19.2"
 
       - name: Install PostgreSQL client
         run: sudo apt-get update && sudo apt-get install -y postgresql-client
