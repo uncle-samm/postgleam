@@ -19,6 +19,10 @@
 - Pool health-check pings wait at most `config.connect_timeout` instead of
   the full query timeout, reconnect at once when they fail, and the
   connection is not handed out while it is being checked.
+- Releases are published to Hex by GitHub Actions: publishing a GitHub
+  release whose tag matches `gleam.toml` runs the full CI at that tag and
+  then `gleam publish`. `make release` runs the local checks, pushes and
+  creates the release.
 
 ## 0.9.0
 
