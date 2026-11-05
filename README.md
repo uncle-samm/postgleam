@@ -226,6 +226,15 @@ comes back, anything left open (such as a transaction) is rolled back first;
 this also happens if the process holding it exits. Idle connections are
 pinged every `config.idle_interval`, and a crashed connection is replaced.
 
+When the pool finds a broken connection (a ping or query timed out or the
+socket closed), it checks every idle connection at once and reconnects the
+ones that don't answer. Sockets that died together, for example while the
+machine was suspended, are replaced in one sweep instead of one failed query
+at a time. Health-check pings wait at most `config.connect_timeout`. If your
+application knows its sockets are dead, such as right after a resume, call
+`pool.reconnect_all(db)`. It reconnects idle connections right away, and ones
+in use as soon as they are checked back in.
+
 Under a supervisor:
 
 ```gleam

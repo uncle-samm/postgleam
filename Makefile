@@ -32,7 +32,8 @@ tag:
 publish:
 	/usr/bin/expect scripts/publish.sh
 
-release: check push tag publish
+release:
+	sh scripts/release.sh
 
 bench: bench-pure bench-integration
 
