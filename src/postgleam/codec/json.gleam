@@ -5,7 +5,7 @@ import gleam/option
 import postgleam/codec.{
   type Codec, type CodecMatcher, Binary, Codec, CodecMatcher,
 }
-import postgleam/value.{type Value, Json}
+import postgleam/value.{type Value, Json, Jsonb}
 
 pub const oid = 114
 
@@ -31,7 +31,8 @@ fn build(type_oid: Int) -> Codec {
 
 pub fn encode(val: Value) -> Result(BitArray, String) {
   case val {
-    Json(s) -> Ok(<<s:utf8>>)
+    // json and jsonb take the same text, so either value fits either column.
+    Json(s) | Jsonb(s) -> Ok(<<s:utf8>>)
     _ -> Error("json codec: expected Json value")
   }
 }

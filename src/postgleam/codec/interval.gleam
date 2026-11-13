@@ -31,7 +31,14 @@ fn build(type_oid: Int) -> Codec {
 pub fn encode(val: Value) -> Result(BitArray, String) {
   case val {
     Interval(usec, days, months) ->
-      Ok(<<usec:64-big, days:32-big, months:32-big>>)
+      case
+        codec.fits_int64(usec)
+        && codec.fits_int32(days)
+        && codec.fits_int32(months)
+      {
+        True -> Ok(<<usec:64-big, days:32-big, months:32-big>>)
+        False -> Error("interval codec: value out of range")
+      }
     _ -> Error("interval codec: expected Interval value")
   }
 }

@@ -277,3 +277,47 @@ pub fn pool_stats_test() {
     })
   pool.shutdown(p)
 }
+
+@external(erlang, "postgleam_test_ffi", "rescue")
+fn rescue(f: fn() -> a) -> Result(Nil, Nil)
+
+/// Bug: a panic inside `with_connection` or `transaction` skipped the
+/// check-in. A process that survived the panic (a web handler that rescues
+/// crashes) kept the connection for ever, and the pool ran dry.
+pub fn pool_checks_in_when_the_callback_panics_test() {
+  let cfg = test_config() |> config.queue_timeout(500)
+  let assert Ok(p) = pool.start(cfg, size: 2)
+  list.each([1, 2, 3], fn(_) {
+    let assert Error(Nil) =
+      rescue(fn() { pool.with_connection(p, fn(_conn) { panic as "boom" }) })
+    let assert Error(Nil) =
+      rescue(fn() { pool.transaction(p, fn(_conn) { panic as "boom" }) })
+  })
+  // Both connections are back: one caller can hold one while it uses the
+  // other.
+  let assert Ok(_) =
+    pool.with_connection(p, fn(_conn) { pool.query(p, "SELECT 1", []) })
+  pool.shutdown(p)
+}
+
+/// A panic inside a pooled transaction rolls the transaction back.
+pub fn pool_transaction_rolls_back_on_panic_test() {
+  let assert Ok(p) = pool.start(test_config(), size: 1)
+  let assert Ok(_) =
+    pool.simple_query(
+      p,
+      "DROP TABLE IF EXISTS _panic_tx; CREATE TABLE _panic_tx (n int4)",
+    )
+  let assert Error(Nil) =
+    rescue(fn() {
+      pool.transaction(p, fn(conn) {
+        let assert Ok(_) =
+          postgleam.query(conn, "INSERT INTO _panic_tx VALUES (1)", [])
+        panic as "boom"
+      })
+    })
+  let assert Ok(r) = pool.query(p, "SELECT count(*)::int4 FROM _panic_tx", [])
+  should.equal(r.rows, [[Some(value.Integer(0))]])
+  let assert Ok(_) = pool.simple_query(p, "DROP TABLE _panic_tx")
+  pool.shutdown(p)
+}

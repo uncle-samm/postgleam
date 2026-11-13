@@ -388,3 +388,166 @@ pub fn multidimensional_array_test() {
   should.equal(response.rows, [[[1, 2], [3, 4]]])
   postgleam.disconnect(conn)
 }
+
+// =============================================================================
+// Bugs found in the second review (0.9.1)
+// =============================================================================
+
+@external(erlang, "postgleam_test_ffi", "rescue")
+fn rescue(f: fn() -> a) -> Result(Nil, Nil)
+
+/// Bug: `postgleam.int(2^63)` into an int8 column was stored as
+/// -9223372036854775808.
+pub fn out_of_range_integer_is_refused_test() {
+  let assert Ok(conn) = postgleam.connect(test_config())
+  let assert Error(error.EncodeError(message)) =
+    postgleam.query(conn, "SELECT $1::int8", [
+      postgleam.int(9_223_372_036_854_775_808),
+    ])
+  should.be_true(string.contains(message, "out of range"))
+  let assert Ok(result) =
+    postgleam.query(conn, "SELECT $1::int8", [
+      postgleam.int(9_223_372_036_854_775_807),
+    ])
+  should.equal(result.rows, [[Some(value.Integer(9_223_372_036_854_775_807))]])
+  postgleam.disconnect(conn)
+}
+
+/// Bug: after the connection was lost inside a transaction, `ROLLBACK TO
+/// SAVEPOINT` was taken for `ROLLBACK`, switched the guard off, and later
+/// statements were committed in autocommit mode on a new connection.
+pub fn rollback_to_savepoint_keeps_lost_transaction_guard_test() {
+  let cfg = test_config() |> config.timeout(300)
+  let assert Ok(conn) = postgleam.connect(cfg)
+  let assert Ok(_) =
+    postgleam.simple_query(
+      conn,
+      "DROP TABLE IF EXISTS _lost_sp; CREATE TABLE _lost_sp (n int4)",
+    )
+  let result =
+    postgleam.transaction(conn, fn(c) {
+      let assert Ok(_) = postgleam.simple_query(c, "SAVEPOINT sp")
+      let assert Error(error.TimeoutError) =
+        postgleam.query(c, "SELECT pg_sleep(1)", [])
+      let assert Error(error.ConnectionError(_)) =
+        postgleam.simple_query(c, "ROLLBACK TO SAVEPOINT sp")
+      let assert Error(error.ConnectionError(_)) =
+        postgleam.simple_query(c, "rollback\tto sp;")
+      let assert Error(error.ConnectionError(_)) =
+        postgleam.query(c, "INSERT INTO _lost_sp VALUES (2)", [])
+      Ok(Nil)
+    })
+  let assert Error(postgleam.TransactionFailed(_)) = result
+  let assert Ok(r) =
+    postgleam.query(conn, "SELECT count(*)::int4 FROM _lost_sp", [])
+  should.equal(r.rows, [[Some(value.Integer(0))]])
+  let assert Ok(_) = postgleam.simple_query(conn, "DROP TABLE _lost_sp")
+  postgleam.disconnect(conn)
+}
+
+/// A panic inside `transaction` rolls back instead of leaving the
+/// transaction open on the connection.
+pub fn transaction_rolls_back_on_panic_test() {
+  let assert Ok(conn) = postgleam.connect(test_config())
+  let assert Ok(_) =
+    postgleam.simple_query(
+      conn,
+      "DROP TABLE IF EXISTS _panic_conn; CREATE TABLE _panic_conn (n int4)",
+    )
+  let assert Error(Nil) =
+    rescue(fn() {
+      postgleam.transaction(conn, fn(c) {
+        let assert Ok(_) =
+          postgleam.query(c, "INSERT INTO _panic_conn VALUES (1)", [])
+        panic as "boom"
+      })
+    })
+  // Outside a transaction again: this statement is its own transaction.
+  let assert Ok([r]) =
+    postgleam.simple_query(conn, "SELECT txid_current_if_assigned() IS NULL")
+  should.equal(r.rows, [[Some("t")]])
+  let assert Ok(r) =
+    postgleam.query(conn, "SELECT count(*)::int4 FROM _panic_conn", [])
+  should.equal(r.rows, [[Some(value.Integer(0))]])
+  let assert Ok(_) = postgleam.simple_query(conn, "DROP TABLE _panic_conn")
+  postgleam.disconnect(conn)
+}
+
+/// Integers and floats go into numeric parameters, and json and jsonb take
+/// each other's values. A value that doesn't fit says what was given.
+pub fn lossless_parameter_conversions_test() {
+  let assert Ok(conn) = postgleam.connect(test_config())
+  let assert Ok(r) =
+    postgleam.query(
+      conn,
+      "SELECT $1::numeric, $2::numeric, $3::jsonb, $4::json, $5::oid",
+      [
+        postgleam.int(42),
+        postgleam.float(1.5),
+        postgleam.json("{\"a\":1}"),
+        postgleam.jsonb("[1]"),
+        postgleam.oid(16),
+      ],
+    )
+  should.equal(r.rows, [
+    [
+      Some(value.Numeric("42")),
+      Some(value.Numeric("1.5")),
+      Some(value.Jsonb("{\"a\": 1}")),
+      Some(value.Json("[1]")),
+      Some(value.Oid(16)),
+    ],
+  ])
+  let assert Ok(16) =
+    postgleam.query_one(conn, "SELECT 'bool'::regtype::oid", [], {
+      use n <- decode.element(0, decode.oid)
+      decode.success(n)
+    })
+  let assert Error(error.EncodeError(message)) =
+    postgleam.query(conn, "SELECT $1::timestamptz", [postgleam.int(1)])
+  should.be_true(string.contains(message, "got Integer"))
+  postgleam.disconnect(conn)
+}
+
+/// `'infinity'::date` used to decode as `Date(2147483647)`.
+pub fn date_infinity_test() {
+  let assert Ok(conn) = postgleam.connect(test_config())
+  let assert Ok(r) =
+    postgleam.query(
+      conn,
+      "SELECT 'infinity'::date, '-infinity'::date, $1::date",
+      [Some(value.PosInfinity)],
+    )
+  should.equal(r.rows, [
+    [
+      Some(value.PosInfinity),
+      Some(value.NegInfinity),
+      Some(value.PosInfinity),
+    ],
+  ])
+  postgleam.disconnect(conn)
+}
+
+pub fn rows_affected_and_sqlstate_helpers_test() {
+  let assert Ok(conn) = postgleam.connect(test_config())
+  let assert Ok(_) =
+    postgleam.simple_query(
+      conn,
+      "DROP TABLE IF EXISTS _helpers; CREATE TABLE _helpers (n int4 PRIMARY KEY)",
+    )
+  let assert Ok(inserted) =
+    postgleam.query(conn, "INSERT INTO _helpers VALUES (1), (2), (3)", [])
+  should.equal(postgleam.rows_affected(inserted.tag), Ok(3))
+  let assert Ok(updated) =
+    postgleam.query(conn, "UPDATE _helpers SET n = n + 10 WHERE n > 1", [])
+  should.equal(postgleam.rows_affected(updated.tag), Ok(2))
+  should.equal(postgleam.rows_affected("CREATE TABLE"), Error(Nil))
+  let assert Error(duplicate) =
+    postgleam.query(conn, "INSERT INTO _helpers VALUES (1)", [])
+  should.equal(error.sqlstate(duplicate), Ok("23505"))
+  should.be_true(error.is_unique_violation(duplicate))
+  should.be_false(error.is_foreign_key_violation(duplicate))
+  should.be_false(error.is_unique_violation(error.TimeoutError))
+  let assert Ok(_) = postgleam.simple_query(conn, "DROP TABLE _helpers")
+  postgleam.disconnect(conn)
+}

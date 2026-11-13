@@ -1461,7 +1461,17 @@ fn encode_param(
       }
     Some(val) -> {
       use codec <- result.try(registry.lookup(reg, oid))
-      use bytes <- result.try(codec.encode(val))
+      use bytes <- result.try(
+        codec.encode(val)
+        |> result.map_error(fn(e) {
+          // Say what was given: "expected Text value" alone leaves the
+          // reader guessing which parameter constructor to change.
+          case string.contains(e, "expected") {
+            True -> e <> ", got " <> value.type_name(val)
+            False -> e
+          }
+        }),
+      )
       Ok(#(message.BinaryFormat, Some(bytes)))
     }
   }

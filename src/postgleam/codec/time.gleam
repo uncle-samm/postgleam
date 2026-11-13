@@ -30,7 +30,12 @@ fn build(type_oid: Int) -> Codec {
 
 pub fn encode(val: Value) -> Result(BitArray, String) {
   case val {
-    Time(usec) -> Ok(<<usec:64-big>>)
+    Time(usec) ->
+      case usec >= 0 && usec <= 86_400_000_000 {
+        True -> Ok(<<usec:64-big>>)
+        False ->
+          Error("time codec: value out of range (0..86400000000 microseconds)")
+      }
     _ -> Error("time codec: expected Time value")
   }
 }

@@ -40,3 +40,15 @@ pub type CodecMatcher {
     build: fn(Int) -> Codec,
   )
 }
+
+/// Whether `n` fits a signed 32-bit integer. Codecs check this before
+/// encoding, because a bit array segment silently wraps a value that doesn't
+/// fit.
+pub fn fits_int32(n: Int) -> Bool {
+  n >= -2_147_483_648 && n <= 2_147_483_647
+}
+
+/// Whether `n` fits a signed 64-bit integer.
+pub fn fits_int64(n: Int) -> Bool {
+  n >= -9_223_372_036_854_775_808 && n <= 9_223_372_036_854_775_807
+}

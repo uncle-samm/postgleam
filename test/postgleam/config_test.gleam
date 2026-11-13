@@ -62,3 +62,40 @@ pub fn validate_test() {
   should.be_error(config.validate(config.timeout(ok, 0)))
   should.be_error(config.validate(config.username(ok, "a\u{0000}b")))
 }
+
+/// Like libpq: no database in the URL means the database named after the
+/// user.
+pub fn from_url_database_defaults_to_user_test() {
+  let assert Ok(cfg) = config.from_url("postgres://alice:pw@db.example.com")
+  should.equal(cfg.database, "alice")
+  let assert Ok(cfg) = config.from_url("postgres://alice@db.example.com/")
+  should.equal(cfg.database, "alice")
+  let assert Ok(cfg) = config.from_url("postgres://alice@db.example.com/app")
+  should.equal(cfg.database, "app")
+}
+
+/// Client-side settings from other tools' URLs must not be sent to the
+/// server, which refuses startup parameters it doesn't know.
+pub fn from_url_client_side_parameters_test() {
+  let assert Ok(cfg) =
+    config.from_url(
+      "postgres://u:p@h/db?sslmode=require&channel_binding=prefer&pgbouncer=true&connection_limit=5&pool_timeout=10&schema=app",
+    )
+  should.equal(cfg.pgbouncer, True)
+  should.equal(cfg.extra_parameters, [#("search_path", "app")])
+}
+
+/// Neon's default URL asks for channel binding, which postgleam can't do:
+/// say so instead of ignoring a security setting or failing at the server.
+pub fn from_url_channel_binding_require_test() {
+  should.equal(
+    config.from_url(
+      "postgres://u:p@h/db?sslmode=require&channel_binding=require",
+    ),
+    Error(config.UnsupportedParameter("channel_binding", "require")),
+  )
+  should.equal(
+    config.from_url("postgres://u:p@h/db?sslmode=prefer"),
+    Error(config.InvalidSslMode("prefer")),
+  )
+}

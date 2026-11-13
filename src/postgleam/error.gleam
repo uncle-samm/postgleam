@@ -66,6 +66,36 @@ pub fn to_string(err: Error) -> String {
   }
 }
 
+/// The five-character SQLSTATE code of an error the server reported, such as
+/// `"23505"`. `Error(Nil)` for errors that didn't come from the server.
+pub fn sqlstate(err: Error) -> Result(String, Nil) {
+  case err {
+    PgError(fields:, ..) -> Ok(fields.code)
+    _ -> Error(Nil)
+  }
+}
+
+/// Whether the server refused a row because it would break a unique
+/// constraint or primary key (SQLSTATE 23505).
+pub fn is_unique_violation(err: Error) -> Bool {
+  sqlstate(err) == Ok("23505")
+}
+
+/// Whether the server refused a change because of a foreign key
+/// (SQLSTATE 23503).
+pub fn is_foreign_key_violation(err: Error) -> Bool {
+  sqlstate(err) == Ok("23503")
+}
+
+/// Whether the transaction lost to a concurrent one and is worth running
+/// again: a serialization failure (40001) or a deadlock (40P01).
+pub fn is_serialization_failure(err: Error) -> Bool {
+  case sqlstate(err) {
+    Ok("40001") | Ok("40P01") -> True
+    _ -> False
+  }
+}
+
 /// Parse a raw error field dict (from wire protocol) into structured PgErrorFields
 pub fn parse_error_fields(fields: Dict(String, String)) -> PgErrorFields {
   PgErrorFields(

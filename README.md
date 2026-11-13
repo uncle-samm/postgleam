@@ -81,8 +81,10 @@ import postgleam
 import postgleam/config
 
 // From a URL. Supported query parameters: sslmode (disable, require,
-// verify-ca, verify-full), sslrootcert, connect_timeout (seconds).
-// Anything else is sent to the server as a startup parameter.
+// verify-ca, verify-full), sslrootcert, connect_timeout (seconds),
+// pgbouncer=true and schema=name. channel_binding=require is refused,
+// because postgleam has no channel binding. Anything else is sent to the
+// server as a startup parameter.
 let assert Ok(cfg) =
   config.from_url("postgres://app:secret@db.internal/app?sslmode=verify-full")
 
@@ -168,11 +170,33 @@ postgleam.query(conn, "INSERT INTO users (name, age, email) VALUES ($1, $2, $3)"
 ```
 
 Constructors include `int`, `float`, `text`, `bool`, `null`, `nullable`,
-`bytea`, `uuid`, `uuid_string`, `json`, `jsonb`, `numeric`, `date`,
+`bytea`, `uuid`, `uuid_string`, `json`, `jsonb`, `numeric`, `oid`, `date`,
 `timestamp`, `timestamptz`, `time`, `interval`, `array` and the geometric and
 network types. `text` works for any column type PostgreSQL can parse from
 text (enums, uuid, ranges, ...). `uuid_string` returns a `Result`, so an
 invalid UUID is an error rather than a NULL.
+
+A parameter must match the type PostgreSQL expects, with three exceptions
+that lose nothing: `int` and `float` also go into `numeric`, and `json` and
+`jsonb` go into each other. A number that doesn't fit the column's type,
+such as an `int` above the `int8` range, is an `EncodeError`; it is never
+wrapped around.
+
+### Rows changed and error codes
+
+```gleam
+let assert Ok(result) = postgleam.query(conn, "DELETE FROM jobs WHERE done", [])
+let assert Ok(deleted) = postgleam.rows_affected(result.tag)
+
+case postgleam.query(conn, insert_sql, params) {
+  Error(e) ->
+    case error.is_unique_violation(e) {
+      True -> // the row already exists
+      False -> // error.sqlstate(e) gives the code of any server error
+    }
+  Ok(_) -> // inserted
+}
+```
 
 ## Transactions
 
@@ -196,7 +220,12 @@ case result {
 
 If the connection is lost in the middle of a transaction, the rest of the
 transaction fails with `ConnectionError` instead of running outside it, and
-`transaction` returns `TransactionFailed`.
+`transaction` returns `TransactionFailed`. If your function panics, the
+transaction is rolled back before the panic carries on.
+
+A `Connection` is not tied to one process. If several processes share one,
+their statements join whatever transaction is open on it, so give each
+process its own connection or use a pool.
 
 ## Pool
 
@@ -223,7 +252,7 @@ Each pooled connection is its own actor, so queries from different processes
 run in parallel. When no connection is free a caller waits up to
 `config.queue_timeout` (5 s) and then gets `PoolTimeout`. When a connection
 comes back, anything left open (such as a transaction) is rolled back first;
-this also happens if the process holding it exits. Idle connections are
+this also happens if the process holding it exits or your function panics. Idle connections are
 pinged every `config.idle_interval`, and a crashed connection is replaced.
 
 When the pool finds a broken connection (a ping or query timed out or the

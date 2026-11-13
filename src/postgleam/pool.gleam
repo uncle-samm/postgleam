@@ -55,6 +55,7 @@ import postgleam/decode.{type RowDecoder}
 import postgleam/error.{type Error}
 import postgleam/internal/call
 import postgleam/internal/connection_actor
+import postgleam/internal/protect
 
 /// A handle to a running pool.
 pub opaque type Pool {
@@ -639,14 +640,17 @@ fn stop_connection(slot: Slot) -> Nil {
 /// connection must not be used after `f` returns. Anything `f` leaves open
 /// (such as a transaction) is rolled back before the next caller gets the
 /// connection. If the calling process exits while holding the connection,
-/// the pool takes it back.
+/// the pool takes it back, and if `f` panics the connection is checked in
+/// before the panic carries on, so a caller that rescues panics doesn't leak
+/// connections.
 pub fn with_connection(
   pool: Pool,
   f: fn(Connection) -> Result(a, Error),
 ) -> Result(a, Error) {
   use #(id, conn) <- result.try(checkout(pool))
-  let result = f(conn)
-  process.send(pool.subject, Checkin(id))
+  let checkin = fn() { process.send(pool.subject, Checkin(id)) }
+  let result = protect.on_panic(fn() { f(conn) }, checkin)
+  checkin()
   result
 }
 
@@ -721,8 +725,10 @@ pub fn transaction(
   case checkout(pool) {
     Error(e) -> Error(postgleam.TransactionFailed(e))
     Ok(#(id, conn)) -> {
-      let result = postgleam.transaction(conn, f)
-      process.send(pool.subject, Checkin(id))
+      let checkin = fn() { process.send(pool.subject, Checkin(id)) }
+      let result =
+        protect.on_panic(fn() { postgleam.transaction(conn, f) }, checkin)
+      checkin()
       result
     }
   }
