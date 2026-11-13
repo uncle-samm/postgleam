@@ -1,11 +1,21 @@
 %% Erlang FFI for postgleam.
 %%
-%% Only the TLS upgrade lives here: there is no Gleam TLS library for the
-%% BEAM, and building `ssl:connect/3` options (including a verify_fun
-%% closure) is clearer in Erlang. Everything else is Gleam, or a direct
+%% Two things live here. The TLS upgrade: there is no Gleam TLS library for
+%% the BEAM, and building `ssl:connect/3` options (including a verify_fun
+%% closure) is clearer in Erlang. And `protect/2`: Gleam has no way to run
+%% cleanup when a callback panics. Everything else is Gleam, or a direct
 %% `@external` call into the Erlang standard library.
 -module(postgleam_ffi).
--export([ssl_upgrade/7, ssl_send/2, ssl_recv/2, ssl_close/1]).
+-export([ssl_upgrade/7, ssl_send/2, ssl_recv/2, ssl_close/1, protect/2]).
+
+%% Run Fun. If it raises, run Cleanup and raise the same exception again,
+%% with its original stack trace.
+protect(Fun, Cleanup) ->
+    try Fun()
+    catch Class:Reason:Stack ->
+        _ = Cleanup(),
+        erlang:raise(Class, Reason, Stack)
+    end.
 
 %% Upgrade a TCP socket to TLS.
 %% Verify=true: verify_peer against CaFile (or the system store when empty),

@@ -31,7 +31,14 @@ fn build(type_oid: Int) -> Codec {
 
 pub fn encode(val: Value) -> Result(BitArray, String) {
   case val {
-    Integer(n) -> Ok(<<n:64-big>>)
+    Integer(n) ->
+      case codec.fits_int64(n) {
+        True -> Ok(<<n:64-big>>)
+        False ->
+          Error(
+            "int8 codec: value out of range (-9223372036854775808..9223372036854775807)",
+          )
+      }
     _ -> Error("int8 codec: expected Integer value")
   }
 }

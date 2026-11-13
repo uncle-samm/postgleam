@@ -30,7 +30,11 @@ fn build(type_oid: Int) -> Codec {
 
 pub fn encode(val: Value) -> Result(BitArray, String) {
   case val {
-    TimeTz(usec, tz_offset) -> Ok(<<usec:64-big, tz_offset:32-big>>)
+    TimeTz(usec, tz_offset) ->
+      case usec >= 0 && usec <= 86_400_000_000 && codec.fits_int32(tz_offset) {
+        True -> Ok(<<usec:64-big, tz_offset:32-big>>)
+        False -> Error("timetz codec: value out of range")
+      }
     _ -> Error("timetz codec: expected TimeTz value")
   }
 }

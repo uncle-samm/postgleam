@@ -6,6 +6,7 @@
 ////
 //// Values are represented as decimal strings to keep arbitrary precision.
 
+import gleam/float
 import gleam/int
 import gleam/list
 import gleam/option
@@ -47,8 +48,13 @@ pub fn encode(val: Value) -> Result(BitArray, String) {
     PosInfinity -> Ok(<<0:16, 0:16, 0xD000:16, 0:16>>)
     NegInfinity -> Ok(<<0:16, 0:16, 0xF000:16, 0:16>>)
     Numeric(s) -> encode_string(s)
+    // Integers and finite floats convert to numeric without surprises.
+    value.Integer(n) -> encode_string(int.to_string(n))
+    value.Float(f) -> encode_string(float.to_string(f))
     _ ->
-      Error("numeric codec: expected Numeric, NaN, PosInfinity, or NegInfinity")
+      Error(
+        "numeric codec: expected Numeric, Integer, Float, NaN, PosInfinity, or NegInfinity",
+      )
   }
 }
 

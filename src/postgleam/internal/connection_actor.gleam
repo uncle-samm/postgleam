@@ -369,19 +369,40 @@ type TransactionEnd {
   Rollback
 }
 
-/// Recognise a statement that ends a transaction.
+/// Recognise a statement that ends a transaction, and nothing else.
+///
+/// `ROLLBACK TO SAVEPOINT` stays inside the transaction, and `ROLLBACK
+/// PREPARED` / `COMMIT PREPARED` are about another transaction, so none of
+/// them count. Neither does a script of several statements: only its first
+/// statement would end the transaction, and the rest must still run.
 fn transaction_end(sql: String) -> Option(TransactionEnd) {
+  let statement = trim_statement(sql)
   let words =
-    sql
-    |> string.trim
-    |> string.replace(";", "")
+    statement
     |> string.lowercase
+    |> string.replace("\n", " ")
+    |> string.replace("\r", " ")
+    |> string.replace("\t", " ")
     |> string.split(" ")
     |> list.filter(fn(w) { w != "" })
-  case words {
-    ["rollback", ..] | ["abort", ..] -> Some(Rollback)
-    ["commit", ..] | ["end", ..] -> Some(Commit)
-    _ -> None
+  case string.contains(statement, ";"), words {
+    True, _ -> None
+    _, ["rollback", "to", ..]
+    | _, ["rollback", "prepared", ..]
+    | _, ["commit", "prepared", ..]
+    -> None
+    _, ["rollback", ..] | _, ["abort", ..] -> Some(Rollback)
+    _, ["commit", ..] | _, ["end", ..] -> Some(Commit)
+    _, _ -> None
+  }
+}
+
+/// `sql` without surrounding whitespace and trailing semicolons.
+fn trim_statement(sql: String) -> String {
+  let trimmed = string.trim(sql)
+  case string.ends_with(trimmed, ";") {
+    True -> trim_statement(string.drop_end(trimmed, 1))
+    False -> trimmed
   }
 }
 

@@ -10,8 +10,13 @@ on:
 
 jobs:
   test:
-    name: Build, test, and docs
+    name: Build, test, and docs (OTP ${{ matrix.otp }})
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        otp: ["27", "29"]
 
     services:
       postgres:
@@ -87,7 +92,7 @@ jobs:
 
       - uses: erlef/setup-beam@v1
         with:
-          otp-version: "27"
+          otp-version: ${{ matrix.otp }}
           gleam-version: "1.19.2"
 
       - name: Install dependencies

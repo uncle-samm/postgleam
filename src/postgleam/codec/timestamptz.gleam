@@ -31,7 +31,16 @@ fn build(type_oid: Int) -> Codec {
 
 pub fn encode(val: Value) -> Result(BitArray, String) {
   case val {
-    Timestamptz(usec) -> Ok(<<usec:64-big>>)
+    // The two ends of the range are 'infinity' and '-infinity' on the wire,
+    // so a finite timestamp can't use them.
+    Timestamptz(usec) ->
+      case
+        usec > -9_223_372_036_854_775_808 && usec < 9_223_372_036_854_775_807
+      {
+        True -> Ok(<<usec:64-big>>)
+        False ->
+          Error("timestamptz codec: value out of range for a 64-bit integer")
+      }
     PosInfinity -> Ok(<<0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF>>)
     NegInfinity -> Ok(<<0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00>>)
     _ -> Error("timestamptz codec: expected Timestamptz value")

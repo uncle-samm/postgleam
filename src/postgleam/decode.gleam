@@ -154,7 +154,7 @@ pub fn list(inner: ValueDecoder(a)) -> ValueDecoder(List(a)) {
         })
       Some(other) ->
         Error(error.DecodeError(
-          "Expected Array, got " <> value_type_name(other),
+          "Expected Array, got " <> value.type_name(other),
         ))
       None -> Error(error.DecodeError("Expected Array, got NULL"))
     }
@@ -193,7 +193,7 @@ pub fn int(val: Option(Value)) -> Result(Int, Error) {
     Some(value.Integer(n)) -> Ok(n)
     Some(other) ->
       Error(error.DecodeError(
-        "Expected Integer, got " <> value_type_name(other),
+        "Expected Integer, got " <> value.type_name(other),
       ))
     None -> Error(error.DecodeError("Expected Integer, got NULL"))
   }
@@ -214,7 +214,7 @@ pub fn text(val: Option(Value)) -> Result(String, Error) {
         Error(_) -> Error(error.DecodeError("Failed to format UUID as string"))
       }
     Some(other) ->
-      Error(error.DecodeError("Expected Text, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Text, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Text, got NULL"))
   }
 }
@@ -225,7 +225,7 @@ pub fn bool(val: Option(Value)) -> Result(Bool, Error) {
     Some(value.Boolean(b)) -> Ok(b)
     Some(other) ->
       Error(error.DecodeError(
-        "Expected Boolean, got " <> value_type_name(other),
+        "Expected Boolean, got " <> value.type_name(other),
       ))
     None -> Error(error.DecodeError("Expected Boolean, got NULL"))
   }
@@ -236,7 +236,7 @@ pub fn float(val: Option(Value)) -> Result(Float, Error) {
   case val {
     Some(value.Float(f)) -> Ok(f)
     Some(other) ->
-      Error(error.DecodeError("Expected Float, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Float, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Float, got NULL"))
   }
 }
@@ -246,7 +246,7 @@ pub fn bytea(val: Option(Value)) -> Result(BitArray, Error) {
   case val {
     Some(value.Bytea(b)) -> Ok(b)
     Some(other) ->
-      Error(error.DecodeError("Expected Bytea, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Bytea, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Bytea, got NULL"))
   }
 }
@@ -256,7 +256,7 @@ pub fn uuid(val: Option(Value)) -> Result(BitArray, Error) {
   case val {
     Some(value.Uuid(u)) -> Ok(u)
     Some(other) ->
-      Error(error.DecodeError("Expected Uuid, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Uuid, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Uuid, got NULL"))
   }
 }
@@ -270,7 +270,7 @@ pub fn uuid_string(val: Option(Value)) -> Result(String, Error) {
         Error(_) -> Error(error.DecodeError("Failed to format UUID as string"))
       }
     Some(other) ->
-      Error(error.DecodeError("Expected Uuid, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Uuid, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Uuid, got NULL"))
   }
 }
@@ -280,7 +280,7 @@ pub fn json(val: Option(Value)) -> Result(String, Error) {
   case val {
     Some(value.Json(s)) -> Ok(s)
     Some(other) ->
-      Error(error.DecodeError("Expected Json, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Json, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Json, got NULL"))
   }
 }
@@ -290,7 +290,7 @@ pub fn jsonb(val: Option(Value)) -> Result(String, Error) {
   case val {
     Some(value.Jsonb(s)) -> Ok(s)
     Some(other) ->
-      Error(error.DecodeError("Expected Jsonb, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Jsonb, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Jsonb, got NULL"))
   }
 }
@@ -301,18 +301,31 @@ pub fn numeric(val: Option(Value)) -> Result(String, Error) {
     Some(value.Numeric(n)) -> Ok(n)
     Some(other) ->
       Error(error.DecodeError(
-        "Expected Numeric, got " <> value_type_name(other),
+        "Expected Numeric, got " <> value.type_name(other),
       ))
     None -> Error(error.DecodeError("Expected Numeric, got NULL"))
   }
 }
 
-/// Decode a date value (days since 2000-01-01).
+/// Decode an OID value (oid, regclass, regtype and the other OID types).
+pub fn oid(val: Option(Value)) -> Result(Int, Error) {
+  case val {
+    Some(value.Oid(n)) -> Ok(n)
+    Some(other) ->
+      Error(error.DecodeError("Expected Oid, got " <> value.type_name(other)))
+    None -> Error(error.DecodeError("Expected Oid, got NULL"))
+  }
+}
+
+/// Decode a date value (days since 2000-01-01). A date of `infinity` or
+/// `-infinity` is not a number of days and fails to decode; match on
+/// `value.PosInfinity` and `value.NegInfinity` yourself if a column can hold
+/// them.
 pub fn date(val: Option(Value)) -> Result(Int, Error) {
   case val {
     Some(value.Date(d)) -> Ok(d)
     Some(other) ->
-      Error(error.DecodeError("Expected Date, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Date, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Date, got NULL"))
   }
 }
@@ -323,7 +336,7 @@ pub fn timestamp(val: Option(Value)) -> Result(Int, Error) {
     Some(value.Timestamp(t)) -> Ok(t)
     Some(other) ->
       Error(error.DecodeError(
-        "Expected Timestamp, got " <> value_type_name(other),
+        "Expected Timestamp, got " <> value.type_name(other),
       ))
     None -> Error(error.DecodeError("Expected Timestamp, got NULL"))
   }
@@ -335,7 +348,7 @@ pub fn timestamptz(val: Option(Value)) -> Result(Int, Error) {
     Some(value.Timestamptz(t)) -> Ok(t)
     Some(other) ->
       Error(error.DecodeError(
-        "Expected Timestamptz, got " <> value_type_name(other),
+        "Expected Timestamptz, got " <> value.type_name(other),
       ))
     None -> Error(error.DecodeError("Expected Timestamptz, got NULL"))
   }
@@ -346,7 +359,7 @@ pub fn time(val: Option(Value)) -> Result(Int, Error) {
   case val {
     Some(value.Time(t)) -> Ok(t)
     Some(other) ->
-      Error(error.DecodeError("Expected Time, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Time, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Time, got NULL"))
   }
 }
@@ -356,7 +369,7 @@ pub fn timetz(val: Option(Value)) -> Result(#(Int, Int), Error) {
   case val {
     Some(value.TimeTz(us, tz)) -> Ok(#(us, tz))
     Some(other) ->
-      Error(error.DecodeError("Expected TimeTz, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected TimeTz, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected TimeTz, got NULL"))
   }
 }
@@ -367,7 +380,7 @@ pub fn interval(val: Option(Value)) -> Result(#(Int, Int, Int), Error) {
     Some(value.Interval(us, days, months)) -> Ok(#(us, days, months))
     Some(other) ->
       Error(error.DecodeError(
-        "Expected Interval, got " <> value_type_name(other),
+        "Expected Interval, got " <> value.type_name(other),
       ))
     None -> Error(error.DecodeError("Expected Interval, got NULL"))
   }
@@ -378,7 +391,7 @@ pub fn xml(val: Option(Value)) -> Result(String, Error) {
   case val {
     Some(value.Xml(s)) -> Ok(s)
     Some(other) ->
-      Error(error.DecodeError("Expected Xml, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Xml, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Xml, got NULL"))
   }
 }
@@ -389,7 +402,7 @@ pub fn jsonpath(val: Option(Value)) -> Result(String, Error) {
     Some(value.Jsonpath(s)) -> Ok(s)
     Some(other) ->
       Error(error.DecodeError(
-        "Expected Jsonpath, got " <> value_type_name(other),
+        "Expected Jsonpath, got " <> value.type_name(other),
       ))
     None -> Error(error.DecodeError("Expected Jsonpath, got NULL"))
   }
@@ -400,7 +413,7 @@ pub fn money(val: Option(Value)) -> Result(Int, Error) {
   case val {
     Some(value.Money(n)) -> Ok(n)
     Some(other) ->
-      Error(error.DecodeError("Expected Money, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Money, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Money, got NULL"))
   }
 }
@@ -410,7 +423,7 @@ pub fn point(val: Option(Value)) -> Result(#(Float, Float), Error) {
   case val {
     Some(value.Point(x, y)) -> Ok(#(x, y))
     Some(other) ->
-      Error(error.DecodeError("Expected Point, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Point, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Point, got NULL"))
   }
 }
@@ -420,7 +433,7 @@ pub fn line(val: Option(Value)) -> Result(#(Float, Float, Float), Error) {
   case val {
     Some(value.Line(a, b, c)) -> Ok(#(a, b, c))
     Some(other) ->
-      Error(error.DecodeError("Expected Line, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Line, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Line, got NULL"))
   }
 }
@@ -432,7 +445,7 @@ pub fn lseg(
   case val {
     Some(value.Lseg(x1, y1, x2, y2)) -> Ok(#(x1, y1, x2, y2))
     Some(other) ->
-      Error(error.DecodeError("Expected Lseg, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Lseg, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Lseg, got NULL"))
   }
 }
@@ -442,7 +455,7 @@ pub fn box(val: Option(Value)) -> Result(#(Float, Float, Float, Float), Error) {
   case val {
     Some(value.Box(x1, y1, x2, y2)) -> Ok(#(x1, y1, x2, y2))
     Some(other) ->
-      Error(error.DecodeError("Expected Box, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Box, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Box, got NULL"))
   }
 }
@@ -452,7 +465,7 @@ pub fn circle(val: Option(Value)) -> Result(#(Float, Float, Float), Error) {
   case val {
     Some(value.Circle(x, y, r)) -> Ok(#(x, y, r))
     Some(other) ->
-      Error(error.DecodeError("Expected Circle, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Circle, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Circle, got NULL"))
   }
 }
@@ -464,7 +477,7 @@ pub fn path(
   case val {
     Some(value.Path(closed, pts)) -> Ok(#(closed, pts))
     Some(other) ->
-      Error(error.DecodeError("Expected Path, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Path, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Path, got NULL"))
   }
 }
@@ -475,7 +488,7 @@ pub fn polygon(val: Option(Value)) -> Result(List(#(Float, Float)), Error) {
     Some(value.Polygon(pts)) -> Ok(pts)
     Some(other) ->
       Error(error.DecodeError(
-        "Expected Polygon, got " <> value_type_name(other),
+        "Expected Polygon, got " <> value.type_name(other),
       ))
     None -> Error(error.DecodeError("Expected Polygon, got NULL"))
   }
@@ -486,7 +499,7 @@ pub fn inet(val: Option(Value)) -> Result(#(Int, BitArray, Int), Error) {
   case val {
     Some(value.Inet(family, addr, mask)) -> Ok(#(family, addr, mask))
     Some(other) ->
-      Error(error.DecodeError("Expected Inet, got " <> value_type_name(other)))
+      Error(error.DecodeError("Expected Inet, got " <> value.type_name(other)))
     None -> Error(error.DecodeError("Expected Inet, got NULL"))
   }
 }
@@ -497,7 +510,7 @@ pub fn macaddr(val: Option(Value)) -> Result(BitArray, Error) {
     Some(value.Macaddr(b)) -> Ok(b)
     Some(other) ->
       Error(error.DecodeError(
-        "Expected Macaddr, got " <> value_type_name(other),
+        "Expected Macaddr, got " <> value.type_name(other),
       ))
     None -> Error(error.DecodeError("Expected Macaddr, got NULL"))
   }
@@ -509,7 +522,7 @@ pub fn macaddr8(val: Option(Value)) -> Result(BitArray, Error) {
     Some(value.Macaddr8(b)) -> Ok(b)
     Some(other) ->
       Error(error.DecodeError(
-        "Expected Macaddr8, got " <> value_type_name(other),
+        "Expected Macaddr8, got " <> value.type_name(other),
       ))
     None -> Error(error.DecodeError("Expected Macaddr8, got NULL"))
   }
@@ -521,7 +534,7 @@ pub fn bit_string(val: Option(Value)) -> Result(#(Int, BitArray), Error) {
     Some(value.BitString(count, data)) -> Ok(#(count, data))
     Some(other) ->
       Error(error.DecodeError(
-        "Expected BitString, got " <> value_type_name(other),
+        "Expected BitString, got " <> value.type_name(other),
       ))
     None -> Error(error.DecodeError("Expected BitString, got NULL"))
   }
@@ -551,45 +564,5 @@ fn list_at(l: List(a), index: Int) -> Result(a, Nil) {
     [x, ..], 0 -> Ok(x)
     [_, ..rest], n if n > 0 -> list_at(rest, n - 1)
     _, _ -> Error(Nil)
-  }
-}
-
-fn value_type_name(val: Value) -> String {
-  case val {
-    value.Boolean(_) -> "Boolean"
-    value.Integer(_) -> "Integer"
-    value.Float(_) -> "Float"
-    value.PosInfinity -> "PosInfinity"
-    value.NegInfinity -> "NegInfinity"
-    value.NaN -> "NaN"
-    value.Text(_) -> "Text"
-    value.Bytea(_) -> "Bytea"
-    value.Uuid(_) -> "Uuid"
-    value.Oid(_) -> "Oid"
-    value.Void -> "Void"
-    value.Array(_) -> "Array"
-    value.Date(_) -> "Date"
-    value.Time(_) -> "Time"
-    value.TimeTz(_, _) -> "TimeTz"
-    value.Timestamp(_) -> "Timestamp"
-    value.Timestamptz(_) -> "Timestamptz"
-    value.Interval(_, _, _) -> "Interval"
-    value.Json(_) -> "Json"
-    value.Jsonb(_) -> "Jsonb"
-    value.Numeric(_) -> "Numeric"
-    value.Point(_, _) -> "Point"
-    value.Inet(_, _, _) -> "Inet"
-    value.Macaddr(_) -> "Macaddr"
-    value.Macaddr8(_) -> "Macaddr8"
-    value.Money(_) -> "Money"
-    value.Xml(_) -> "Xml"
-    value.Jsonpath(_) -> "Jsonpath"
-    value.BitString(_, _) -> "BitString"
-    value.Line(_, _, _) -> "Line"
-    value.Lseg(_, _, _, _) -> "Lseg"
-    value.Box(_, _, _, _) -> "Box"
-    value.Path(_, _) -> "Path"
-    value.Polygon(_) -> "Polygon"
-    value.Circle(_, _, _) -> "Circle"
   }
 }

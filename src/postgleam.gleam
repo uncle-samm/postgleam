@@ -27,9 +27,11 @@
 //// request at a time; use `postgleam/pool` to run queries concurrently.
 
 import gleam/erlang/process.{type Pid, type Subject}
+import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/result
+import gleam/string
 import postgleam/config.{type Config}
 import postgleam/connection.{
   type ExtendedQueryResult, type PreparedStatement, type SimpleQueryResult,
@@ -38,6 +40,7 @@ import postgleam/decode.{type RowDecoder}
 import postgleam/error.{type Error}
 import postgleam/internal/call
 import postgleam/internal/connection_actor.{type Message}
+import postgleam/internal/protect
 import postgleam/value.{type Value}
 
 /// A query parameter value. `None` is SQL NULL.
@@ -281,8 +284,15 @@ pub type TransactionError(e) {
 }
 
 /// Run `f` in a transaction: BEGIN, then COMMIT if `f` returns `Ok` or
-/// ROLLBACK if it returns `Error`. Nested calls are not supported (use
-/// SAVEPOINT yourself); with a pool, use `pool.transaction`.
+/// ROLLBACK if it returns `Error` or panics (the panic then carries on).
+/// Nested calls are not supported (use SAVEPOINT yourself); with a pool, use
+/// `pool.transaction`.
+///
+/// A `Connection` runs one statement at a time but does not belong to one
+/// process: if another process uses the same `Connection` while `f` runs,
+/// its statements join this transaction. Give each process its own
+/// connection, or use a pool, which hands a connection to one caller at a
+/// time.
 pub fn transaction(
   conn: Connection,
   f: fn(Connection) -> Result(a, e),
@@ -290,7 +300,12 @@ pub fn transaction(
   use _ <- result.try(
     simple_query(conn, "BEGIN") |> result.map_error(TransactionFailed),
   )
-  case f(conn) {
+  let rollback = fn() {
+    // Best effort: the panic that brought us here is what gets reported.
+    let _ = simple_query(conn, "ROLLBACK")
+    Nil
+  }
+  case protect.on_panic(fn() { f(conn) }, rollback) {
     Ok(value) ->
       case simple_query(conn, "COMMIT") {
         Ok([connection.SimpleQueryResult(tag: "ROLLBACK", ..)]) ->
@@ -308,6 +323,22 @@ pub fn transaction(
         Ok(_) -> Error(RolledBack(e))
         Error(rollback_error) -> Error(TransactionFailed(rollback_error))
       }
+  }
+}
+
+/// The number of rows a statement changed or returned, read from its command
+/// tag: 3 for `"UPDATE 3"`, `"INSERT 0 3"`, `"DELETE 3"` or `"SELECT 3"`.
+/// `Error(Nil)` for a tag without a count, such as `"CREATE TABLE"`.
+///
+/// ```gleam
+/// let assert Ok(result) = postgleam.query(conn, "DELETE FROM jobs WHERE done", [])
+/// let assert Ok(deleted) = postgleam.rows_affected(result.tag)
+/// ```
+pub fn rows_affected(tag: String) -> Result(Int, Nil) {
+  use last <- result.try(list.last(string.split(tag, " ")))
+  case int.parse(last) {
+    Ok(count) if count >= 0 -> Ok(count)
+    _ -> Error(Nil)
   }
 }
 
@@ -370,6 +401,11 @@ pub fn jsonb(val: String) -> Param {
 /// Create a numeric/decimal parameter (string representation).
 pub fn numeric(val: String) -> Param {
   Some(value.Numeric(val))
+}
+
+/// Create an OID parameter (oid, regclass, regtype and the other OID types).
+pub fn oid(val: Int) -> Param {
+  Some(value.Oid(val))
 }
 
 /// Create a date parameter (days since 2000-01-01).

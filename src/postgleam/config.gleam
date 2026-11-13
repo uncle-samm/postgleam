@@ -122,15 +122,35 @@ pub type UrlError {
   UnsupportedScheme(String)
   InvalidSslMode(String)
   InvalidConnectTimeout(String)
+  /// The URL asks for something postgleam can't do, such as
+  /// `channel_binding=require`. Refused rather than ignored, so a URL never
+  /// promises more than the connection delivers.
+  UnsupportedParameter(name: String, value: String)
 }
 
 /// Parse a connection URL such as
 /// `postgres://user:password@host:5432/database?sslmode=verify-full`.
 ///
-/// Supported query parameters: `sslmode` (`disable`, `require`, `verify-ca`,
-/// `verify-full`), `sslrootcert`, `connect_timeout` (seconds) and
-/// `application_name`. Unknown parameters are sent to the server as startup
-/// parameters.
+/// Like libpq, a URL without a database connects to the database named
+/// after the user.
+///
+/// Query parameters:
+///
+/// - `sslmode`: `disable`, `require`, `verify-ca` or `verify-full`. `prefer`
+///   and `allow` are refused with `InvalidSslMode`, because postgleam never
+///   falls back to an unencrypted connection by itself.
+/// - `sslrootcert`, `connect_timeout` (seconds), `application_name`.
+/// - `channel_binding`: `prefer` and `disable` are accepted and change
+///   nothing; `require` is refused with `UnsupportedParameter`, because
+///   postgleam does not implement SCRAM channel binding.
+/// - `pgbouncer=true` turns on PgBouncer mode (see `pgbouncer`), and
+///   `schema=name` sets `search_path`, as in Prisma URLs. Prisma's pool
+///   settings `connection_limit` and `pool_timeout` are ignored: the pool
+///   size is the `size` given to `pool.start`.
+///
+/// Any other parameter is sent to the server as a startup parameter, so
+/// `?statement_timeout=5000` works and a name the server doesn't know fails
+/// the connection.
 pub fn from_url(url: String) -> Result(Config, UrlError) {
   use parsed <- result.try(uri.parse(url) |> result.replace_error(InvalidUrl))
   use _ <- result.try(case parsed.scheme {
@@ -158,9 +178,10 @@ pub fn from_url(url: String) -> Result(Config, UrlError) {
       }
     None -> base
   }
-  let base = case string.remove_prefix(parsed.path, "/") {
-    "" -> base
-    db -> database(base, percent_decode(db))
+  let base = case string.remove_prefix(parsed.path, "/"), parsed.userinfo {
+    "", Some(_) -> database(base, base.username)
+    "", None -> base
+    db, _ -> database(base, percent_decode(db))
   }
   let query_params = case parsed.query {
     Some(q) -> uri.parse_query(q) |> result.unwrap([])
@@ -185,6 +206,18 @@ fn apply_url_param(
         Ok(s) if s > 0 -> Ok(connect_timeout(cfg, s * 1000))
         _ -> Error(InvalidConnectTimeout(secs))
       }
+    #("channel_binding", "prefer") | #("channel_binding", "disable") -> Ok(cfg)
+    #("channel_binding", other) ->
+      Error(UnsupportedParameter("channel_binding", other))
+    #("pgbouncer", "true") -> Ok(pgbouncer(cfg, True))
+    #("pgbouncer", "false") -> Ok(pgbouncer(cfg, False))
+    #("pgbouncer", other) -> Error(UnsupportedParameter("pgbouncer", other))
+    #("schema", name) ->
+      Ok(extra_parameters(
+        cfg,
+        list.append(cfg.extra_parameters, [#("search_path", name)]),
+      ))
+    #("connection_limit", _) | #("pool_timeout", _) -> Ok(cfg)
     #(key, value) ->
       Ok(extra_parameters(
         cfg,
@@ -281,7 +314,8 @@ pub fn idle_interval(config: Config, ms: Int) -> Config {
 }
 
 /// Set the maximum time in milliseconds to wait for a pool connection.
-/// If no connection becomes available within this time, returns TimeoutError.
+/// If no connection becomes available within this time, the call returns
+/// `PoolTimeout`.
 /// Default: 5000ms.
 pub fn queue_timeout(config: Config, ms: Int) -> Config {
   Config(..config, queue_timeout: ms)

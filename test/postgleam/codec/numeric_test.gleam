@@ -58,6 +58,17 @@ pub fn numeric_roundtrip_large_test() {
 }
 
 pub fn numeric_wrong_type_test() {
-  numeric.encode(value.Integer(1))
+  numeric.encode(value.Boolean(True))
   |> should.be_error()
+}
+
+/// Integers and finite floats are numbers too: they encode like the
+/// numeric string with the same digits.
+pub fn numeric_from_integer_and_float_test() {
+  numeric.encode(value.Integer(-42))
+  |> should.equal(numeric.encode(value.Numeric("-42")))
+  numeric.encode(value.Float(1.5))
+  |> should.equal(numeric.encode(value.Numeric("1.5")))
+  numeric.encode(value.Float(1.0e21))
+  |> should.equal(numeric.encode(value.Numeric("1000000000000000000000")))
 }

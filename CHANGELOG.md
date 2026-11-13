@@ -1,5 +1,59 @@
 # Changelog
 
+## Unreleased
+
+Fixes from a second review of the driver.
+
+### Fixed
+
+- Integers that don't fit their column type are refused with `EncodeError`
+  instead of being stored wrapped around. `postgleam.int(9_223_372_036_854_775_808)`
+  into an `int8` column used to store `-9223372036854775808`. The `int8`,
+  `money`, `date`, `time`, `timetz`, `timestamp`, `timestamptz` and
+  `interval` codecs now check their ranges, as `int2`, `int4` and `oid`
+  already did.
+- `pool.with_connection` and `pool.transaction` check the connection back in
+  when the function panics. A process that survived the panic, such as a web
+  handler that rescues crashes, used to keep the connection for ever, and the
+  pool ran out.
+- `postgleam.transaction` rolls back when the function panics instead of
+  leaving the transaction open on the connection.
+- After a connection was lost inside a transaction, `ROLLBACK TO SAVEPOINT`
+  was taken for `ROLLBACK` and switched the lost-transaction guard off, so
+  later statements were committed on their own. Only a statement that really
+  ends the transaction clears the guard now.
+- `config.from_url` no longer sends client-side settings to the server as
+  startup parameters, which the server refuses. `channel_binding=prefer` and
+  `disable`, and Prisma's `connection_limit` and `pool_timeout`, are accepted
+  and ignored; `pgbouncer=true` turns on PgBouncer mode; `schema=name` sets
+  `search_path`. `channel_binding=require` (Neon's default) returns the new
+  `UnsupportedParameter` error, because postgleam has no channel binding:
+  remove it from the URL.
+- `config.from_url` without a database uses the database named after the
+  user, like libpq, instead of `postgres`.
+- `'infinity'::date` and `'-infinity'::date` decode as `PosInfinity` and
+  `NegInfinity`, like timestamps, instead of `Date(2147483647)` and
+  `Date(-2147483648)`, and those two values can be sent as date parameters.
+
+### Added
+
+- `postgleam.rows_affected(result.tag)` reads the row count from a command
+  tag.
+- `error.sqlstate`, `error.is_unique_violation`,
+  `error.is_foreign_key_violation` and `error.is_serialization_failure`.
+- `postgleam.oid` and `decode.oid` for `oid`, `regclass` and the other OID
+  types.
+- `value.type_name`.
+
+### Changed
+
+- `int` and `float` parameters are accepted for `numeric`, and `json` and
+  `jsonb` parameters for each other. Other mismatches are still errors, and
+  the message now says what was given: `expected Timestamptz value, got
+  Integer`.
+- `config.UrlError` has a new variant, `UnsupportedParameter`.
+- CI runs on OTP 27 and OTP 29.
+
 ## 0.9.1
 
 ### Added

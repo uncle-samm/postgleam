@@ -30,7 +30,11 @@ fn build(type_oid: Int) -> Codec {
 
 pub fn encode(val: Value) -> Result(BitArray, String) {
   case val {
-    Money(n) -> Ok(<<n:64-big>>)
+    Money(n) ->
+      case codec.fits_int64(n) {
+        True -> Ok(<<n:64-big>>)
+        False -> Error("money codec: value out of range for a 64-bit integer")
+      }
     _ -> Error("money codec: expected Money value")
   }
 }

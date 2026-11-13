@@ -13,9 +13,9 @@ pub type Value {
   Integer(Int)
   /// Float (float4, float8) - normal finite values
   Float(Float)
-  /// Positive infinity (float4, float8, timestamp, timestamptz)
+  /// Positive infinity (float4, float8, numeric, date, timestamp, timestamptz)
   PosInfinity
-  /// Negative infinity (float4, float8, timestamp, timestamptz)
+  /// Negative infinity (float4, float8, numeric, date, timestamp, timestamptz)
   NegInfinity
   /// NaN (float4, float8, numeric)
   NaN
@@ -229,5 +229,46 @@ fn hex_byte(b: Int) -> Result(Int, Nil) {
     _ if b >= 0x61 && b <= 0x66 -> Ok(b - 0x61 + 10)
     _ if b >= 0x41 && b <= 0x46 -> Ok(b - 0x41 + 10)
     _ -> Error(Nil)
+  }
+}
+
+/// The name of a value's variant, such as "Integer", for error messages.
+pub fn type_name(val: Value) -> String {
+  case val {
+    Boolean(_) -> "Boolean"
+    Integer(_) -> "Integer"
+    Float(_) -> "Float"
+    PosInfinity -> "PosInfinity"
+    NegInfinity -> "NegInfinity"
+    NaN -> "NaN"
+    Text(_) -> "Text"
+    Bytea(_) -> "Bytea"
+    Uuid(_) -> "Uuid"
+    Oid(_) -> "Oid"
+    Void -> "Void"
+    Array(_) -> "Array"
+    Date(_) -> "Date"
+    Time(_) -> "Time"
+    TimeTz(_, _) -> "TimeTz"
+    Timestamp(_) -> "Timestamp"
+    Timestamptz(_) -> "Timestamptz"
+    Interval(_, _, _) -> "Interval"
+    Json(_) -> "Json"
+    Jsonb(_) -> "Jsonb"
+    Numeric(_) -> "Numeric"
+    Point(_, _) -> "Point"
+    Inet(_, _, _) -> "Inet"
+    Macaddr(_) -> "Macaddr"
+    Macaddr8(_) -> "Macaddr8"
+    Money(_) -> "Money"
+    Xml(_) -> "Xml"
+    Jsonpath(_) -> "Jsonpath"
+    BitString(_, _) -> "BitString"
+    Line(_, _, _) -> "Line"
+    Lseg(_, _, _, _) -> "Lseg"
+    Box(_, _, _, _) -> "Box"
+    Path(_, _) -> "Path"
+    Polygon(_) -> "Polygon"
+    Circle(_, _, _) -> "Circle"
   }
 }
